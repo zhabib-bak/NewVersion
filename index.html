@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Control Room | Ticket Tracker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div id="login-overlay" class="login-overlay">
+      <section class="login-card">
+        <p class="eyebrow">Secure Access</p>
+        <h2>Control Room Sign In</h2>
+        <p class="muted">Use your assigned account name and password.</p>
+        <form id="login-form" class="stack">
+          <label>
+            User name
+            <input id="login-name" required />
+          </label>
+          <label>
+            Password
+            <input id="login-password" required type="password" autocomplete="current-password" />
+          </label>
+          <button type="submit">Sign in</button>
+          <p class="muted">If your account is marked for reset, you will be asked to change the password after signing in.</p>
+        </form>
+      </section>
+    </div>
+
+
+    <div id="password-reset-overlay" class="login-overlay" hidden>
+      <section class="login-card">
+        <p class="eyebrow">Security Update</p>
+        <h2>Change your password</h2>
+        <p class="muted">Your account requires a new password before continuing.</p>
+        <form id="password-reset-form" class="stack">
+          <label>Current password
+            <input id="password-reset-current" required type="password" autocomplete="current-password" />
+          </label>
+          <label>New password
+            <input id="password-reset-new" required type="password" autocomplete="new-password" minlength="10" />
+          </label>
+          <label>Confirm new password
+            <input id="password-reset-confirm" required type="password" autocomplete="new-password" minlength="10" />
+          </label>
+          <button type="submit">Update password</button>
+          <p class="muted">Use at least 10 characters, with uppercase, lowercase and a number.</p>
+        </form>
+      </section>
+    </div>
+
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <p class="eyebrow">Operations Workspace</p>
+          <h1>Control Room</h1>
+          <p class="brand-subtitle">Ticket Tracker</p>
+          <p class="muted">Execute tickets, analyze trends, and govern access from one professional workspace.</p>
+        </div>
+
+        <section class="panel">
+          <div class="header-row">
+            <h2>Session</h2>
+            <button id="logout-button" type="button" class="ghost">Logout</button>
+          </div>
+          <p class="muted">User: <strong id="session-user">-</strong></p>
+          <p class="muted">Role: <strong id="session-role">-</strong></p>
+        </section>
+      </aside>
+
+      <main class="content">
+        <section class="hero">
+          <div>
+            <p class="eyebrow">Control Surface</p>
+            <h2>Tickets Management, Dashboards, Roles and Grants</h2>
+            <p class="muted">Operate lifecycle, capacity, compliance, and security at production level.</p>
+          </div>
+          <div id="message" class="message" hidden></div>
+        </section>
+
+        <nav class="section-tabs panel">
+          <button type="button" class="tab-button" data-tab="entry">Data Entry</button>
+          <button type="button" class="tab-button active" data-tab="tickets">Tickets Management</button>
+          <button type="button" class="tab-button" data-tab="dashboards">Dashboards</button>
+          <button type="button" class="tab-button" data-tab="roles">Roles and Grants</button>
+        </nav>
+
+        <section id="tab-entry" class="tab-panel">
+          <section class="panel">
+            <div class="chart-head">
+              <div>
+                <p class="eyebrow">Ticket Intake</p>
+                <h3>Create a new issue record</h3>
+              </div>
+            </div>
+            <form id="ticket-form" class="entry-layout">
+              <article class="entry-block">
+                <p class="eyebrow">Issue details</p>
+                <label>Description<textarea id="description" required rows="5"></textarea></label>
+                <label>JD ticket number<input id="jd_ticket_number" required placeholder="6914450" /></label>
+                <label>Category<select id="category" required></select></label>
+                <label>Initial note<textarea id="updates_comments" rows="5" placeholder="Opening context for activity timeline"></textarea></label>
+              </article>
+              <article class="entry-block">
+                <p class="eyebrow">Ownership</p>
+                <label>Assignee<select id="assignee" required></select></label>
+                <label>Manager<select id="manager" required></select></label>
+                <p class="eyebrow">Lifecycle</p>
+                <div class="entry-grid">
+                  <label>Priority<select id="priority" required></select></label>
+                  <label>Date opened<input id="date_opening" required type="date" /></label>
+                </div>
+                <div class="actions">
+                  <button type="submit" id="submit-button">Create ticket</button>
+                  <button type="button" id="reset-form" class="ghost">Reset</button>
+                </div>
+              </article>
+            </form>
+          </section>
+        </section>
+
+        <section id="tab-tickets" class="tab-panel active">
+          <div class="panel">
+            <div class="chart-head">
+              <div>
+                <p class="eyebrow">Ticket Register</p>
+                <h3>Search, SLA, and execution</h3>
+              </div>
+              <div class="actions-inline">
+                <button id="export-csv" type="button" class="ghost">Export CSV</button>
+                <span id="ticket-count" class="pill"></span>
+              </div>
+            </div>
+
+            <form id="filters-form" class="filter-grid">
+              <label>Search<input id="search-input" name="q" type="search" placeholder="JD, keywords, comments..." /></label>
+              <label>Status<select name="status" id="filter-status"></select></label>
+              <label>Priority<select name="priority" id="filter-priority"></select></label>
+              <label>Category<select name="category" id="filter-category"></select></label>
+              <label>Assignee<select name="assignee" id="filter-assignee"></select></label>
+              <label>Manager<select name="manager" id="filter-manager"></select></label>
+              <label>Date from<input name="date_from" id="filter-date-from" type="date" /></label>
+              <label>Date to<input name="date_to" id="filter-date-to" type="date" /></label>
+              <div class="filter-actions">
+                <button type="button" id="clear-filters" class="ghost">Clear</button>
+                <button type="button" id="save-view" class="ghost">Save view</button>
+              </div>
+            </form>
+
+            <div class="saved-views">
+              <p class="eyebrow">Saved Views</p>
+              <div id="views-list" class="views-list"></div>
+            </div>
+
+            <div class="board-head">
+              <p class="eyebrow">Kanban Board</p>
+              <p class="muted">Drag and drop cards between statuses to apply workflow transitions.</p>
+            </div>
+            <div id="kanban-board" class="kanban-board"></div>
+
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>JD</th>
+                    <th>Description</th>
+                    <th>Category</th>
+                    <th>Priority</th>
+                    <th>Status</th>
+                    <th>Assignee</th>
+                    <th>Manager</th>
+                    <th>Opened</th>
+                    <th>Due</th>
+                    <th>Aging</th>
+                    <th>SLA</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody id="tickets-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="tab-dashboards" class="tab-panel">
+          <section id="summary-cards" class="summary-grid"></section>
+          <section class="charts-grid">
+            <article class="panel chart-panel">
+              <div class="chart-head">
+                <h3>Opened tickets by period</h3>
+                <div class="segmented">
+                  <button type="button" data-period="day" class="period-button active">Day</button>
+                  <button type="button" data-period="week" class="period-button">Week</button>
+                  <button type="button" data-period="month" class="period-button">Month</button>
+                </div>
+              </div>
+              <div id="opened-trend-chart"></div>
+            </article>
+            <article class="panel chart-panel"><h3>Closed tickets by day</h3><div id="closed-trend-chart"></div></article>
+            <article class="panel chart-panel"><h3>Open by priority</h3><div id="priority-chart"></div></article>
+            <article class="panel chart-panel"><h3>Open by assignee</h3><div id="assignee-chart"></div></article>
+            <article class="panel chart-panel"><h3>Open by category</h3><div id="category-chart"></div></article>
+            <article class="panel chart-panel"><h3>Open by manager</h3><div id="manager-chart"></div></article>
+            <article class="panel chart-panel"><h3>Throughput by week</h3><div id="throughput-chart"></div></article>
+            <article class="panel chart-panel"><h3>Backlog aging buckets</h3><div id="aging-buckets-chart"></div></article>
+          </section>
+        </section>
+
+        <section id="tab-roles" class="tab-panel">
+          <div class="roles-layout">
+            <section class="panel">
+              <p class="eyebrow">Access Registry</p>
+              <h3>Users and roles</h3>
+              <form id="user-form" class="stack dense">
+                <input type="hidden" id="user-id" />
+                <label>Full name<input id="user-name" required /></label>
+                <label>Role<select id="user-role" required></select></label>
+                <label>Temporary password<input id="user-password" type="password" placeholder="Leave empty to keep current password" /></label>
+                <label class="checkbox-row"><input id="user-active" type="checkbox" checked /><span>Active access</span></label>
+                <label class="checkbox-row"><input id="user-password-reset-required" type="checkbox" checked /><span>Force password reset on next login</span></label>
+                <div class="actions">
+                  <button type="submit" id="user-submit">Save user</button>
+                  <button type="button" id="user-reset" class="ghost">Reset</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="panel">
+              <p class="eyebrow">Directory</p>
+              <h3>Users with platform access</h3>
+              <div id="users-list" class="users-list"></div>
+            </section>
+          </div>
+
+          <section class="panel">
+            <p class="eyebrow">Webhooks</p>
+            <h3>External automation integration</h3>
+            <form id="webhook-form" class="webhook-grid">
+              <input type="hidden" id="webhook-id" />
+              <label>Name<input id="webhook-name" required /></label>
+              <label>URL<input id="webhook-url" required placeholder="https://example.com/hook" /></label>
+              <label>Signing secret<input id="webhook-secret" type="password" placeholder="Optional HMAC secret" /></label>
+              <label class="checkbox-row"><input id="webhook-active" type="checkbox" checked /><span>Enabled</span></label>
+              <div class="actions">
+                <button type="submit" id="webhook-submit">Save webhook</button>
+                <button type="button" id="webhook-reset" class="ghost">Reset</button>
+              </div>
+            </form>
+            <div id="webhooks-list" class="users-list"></div>
+            <div class="saved-views">
+              <p class="eyebrow">Recent Deliveries</p>
+              <div id="webhook-deliveries-list" class="audit-list"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <p class="eyebrow">Audit Trail</p>
+            <h3>Immutable security and change log</h3>
+            <div id="audit-list" class="audit-list"></div>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <aside id="ticket-detail" class="ticket-detail" hidden>
+      <div class="ticket-detail-card panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Ticket Detail</p>
+            <h3 id="detail-title">Ticket</h3>
+          </div>
+          <button type="button" id="close-detail" class="ghost">Close</button>
+        </div>
+
+        <section class="detail-layout">
+          <article class="detail-summary">
+            <div class="detail-header">
+              <div>
+                <p class="eyebrow">Issue Summary</p>
+                <h4 id="detail-description"></h4>
+              </div>
+              <div class="detail-badges">
+                <span id="detail-priority" class="badge"></span>
+                <span id="detail-status" class="badge"></span>
+              </div>
+            </div>
+            <div class="detail-meta-grid">
+              <div class="meta-card"><span class="meta-label">JD ticket</span><strong id="detail-jd-ticket-number"></strong></div>
+              <div class="meta-card"><span class="meta-label">Category</span><strong id="detail-category"></strong></div>
+              <div class="meta-card"><span class="meta-label">Assignee</span><strong id="detail-assignee"></strong></div>
+              <div class="meta-card"><span class="meta-label">Manager</span><strong id="detail-manager"></strong></div>
+              <div class="meta-card"><span class="meta-label">Opened</span><strong id="detail-date-opening"></strong></div>
+              <div class="meta-card"><span class="meta-label">Closed</span><strong id="detail-date-closed"></strong></div>
+              <div class="meta-card"><span class="meta-label">Aging</span><strong id="detail-aging"></strong></div>
+              <div class="meta-card"><span class="meta-label">Comments</span><strong id="detail-comment-count"></strong></div>
+            </div>
+
+            <div class="manager-panel">
+              <p class="eyebrow">Manager Controls</p>
+              <h4>Original ticket updates</h4>
+              <form id="manager-edit-form" class="stack dense">
+                <label>Description<textarea id="manager-description" rows="3" required></textarea></label>
+                <div class="manager-grid">
+                  <label>JD ticket number<input id="manager-jd-ticket-number" required /></label>
+                  <label>Category<select id="manager-category" required></select></label>
+                  <label>Priority<select id="manager-priority" required></select></label>
+                  <label>Status<select id="manager-status" required></select></label>
+                  <label>Assignee<select id="manager-assignee" required></select></label>
+                  <label>Manager<select id="manager-manager" required></select></label>
+                  <label>Date opened<input id="manager-date-opening" type="date" required /></label>
+                  <label>Date closed<input id="manager-date-closed" type="date" /></label>
+                </div>
+                <div class="actions">
+                  <button type="submit">Save original ticket</button>
+                  <span class="muted">Requires manager/admin role with valid workflow transition.</span>
+                </div>
+              </form>
+            </div>
+          </article>
+
+          <article class="detail-activity">
+            <div class="comment-composer">
+              <p class="eyebrow">Activity</p>
+              <h4>New comment</h4>
+              <label>Author<select id="detail-comment-author"></select></label>
+              <label>Type<select id="detail-comment-type"></select></label>
+              <div class="template-row">
+                <button type="button" class="ghost small-button" data-template="Investigating root cause and collecting logs.">Investigate</button>
+                <button type="button" class="ghost small-button" data-template="Blocked by dependency. Escalated to owner.">Blocked</button>
+                <button type="button" class="ghost small-button" data-template="Fix applied and validated in operations.">Resolved</button>
+              </div>
+              <label>Comment<textarea id="detail-new-comment" rows="5" placeholder="Write a clear operational update..."></textarea></label>
+              <div class="actions"><button type="button" id="post-comment">Post comment</button></div>
+            </div>
+            <div class="activity-feed">
+              <p class="eyebrow">Timeline</p>
+              <h4>Ticket activity</h4>
+              <div id="comments-list" class="comments-list"></div>
+            </div>
+          </article>
+        </section>
+      </div>
+    </aside>
+
+    <template id="summary-card-template">
+      <article class="summary-card">
+        <span class="summary-label"></span>
+        <strong class="summary-value"></strong>
+      </article>
+    </template>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

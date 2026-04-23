@@ -1,0 +1,10 @@
+{
+  "name": "ticket-control-board",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "smoke": "node scripts/smoke-test.mjs"
+  }
+}
