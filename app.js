@@ -13,7 +13,10 @@ const state = {
   activeTab: "tickets",
   draggingTicketId: null,
   passwordResetRequired: false,
-  webhookDeliveries: []
+  webhookDeliveries: [],
+  importBatches: [],
+  importParsed: null,
+  importMapping: {}
 };
 
 const elements = {
@@ -103,7 +106,30 @@ const elements = {
   webhookReset: document.querySelector("#webhook-reset"),
   webhooksList: document.querySelector("#webhooks-list"),
   webhookDeliveriesList: document.querySelector("#webhook-deliveries-list"),
-  auditList: document.querySelector("#audit-list")
+  auditList: document.querySelector("#audit-list"),
+  importOverlay: document.querySelector("#import-overlay"),
+  closeImport: document.querySelector("#close-import"),
+  importCsv: document.querySelector("#import-csv"),
+  openImportFromEntry: document.querySelector("#open-import-from-entry"),
+  downloadTemplate: document.querySelector("#download-template"),
+  importDropZone: document.querySelector("#import-drop-zone"),
+  importFileInput: document.querySelector("#import-file-input"),
+  importStepUpload: document.querySelector("#import-step-upload"),
+  importStepMapping: document.querySelector("#import-step-mapping"),
+  importStepPreview: document.querySelector("#import-step-preview"),
+  importStepResults: document.querySelector("#import-step-results"),
+  columnMappingTable: document.querySelector("#column-mapping-table"),
+  importRowCount: document.querySelector("#import-row-count"),
+  importProceed: document.querySelector("#import-proceed"),
+  importBackUpload: document.querySelector("#import-back-upload"),
+  importPreviewSummary: document.querySelector("#import-preview-summary"),
+  importPreviewHead: document.querySelector("#import-preview-head"),
+  importPreviewBody: document.querySelector("#import-preview-body"),
+  importConfirm: document.querySelector("#import-confirm"),
+  importBackMapping: document.querySelector("#import-back-mapping"),
+  importResultsContent: document.querySelector("#import-results-content"),
+  importDone: document.querySelector("#import-done"),
+  importHistoryList: document.querySelector("#import-history-list")
 };
 
 init();
@@ -140,6 +166,7 @@ function bindEvents() {
   elements.userReset.addEventListener("click", resetUserForm);
   elements.webhookForm.addEventListener("submit", saveWebhook);
   elements.webhookReset.addEventListener("click", resetWebhookForm);
+  bindImportEvents();
   elements.ticketDetail.addEventListener("click", (event) => {
     if (event.target === elements.ticketDetail) closeTicketDetail();
   });
@@ -254,6 +281,7 @@ async function loadBootstrap() {
   renderTabs();
   applyRoleVisibility();
   await handleHashChange();
+  refreshImportHistory().catch(() => {});
 }
 
 function applyRoleVisibility() {
@@ -1004,6 +1032,439 @@ function renderAudit() {
         .join("")
     : `<p class="muted">No audit events available.</p>`;
 }
+
+// ─── IMPORT FEATURE ─────────────────────────────────────────────────────────
+
+const IMPORT_FIELDS = [
+  { key: "description", label: "Description", required: true },
+  { key: "jd_ticket_number", label: "JD Ticket Number", required: true },
+  { key: "category", label: "Category", required: true },
+  { key: "priority", label: "Priority", required: true },
+  { key: "status", label: "Status", required: false, defaultValue: "Open" },
+  { key: "assignee", label: "Assignee", required: true },
+  { key: "manager", label: "Manager", required: true },
+  { key: "date_opening", label: "Date Opened (YYYY-MM-DD)", required: true },
+  { key: "date_closed", label: "Date Closed (YYYY-MM-DD)", required: false },
+  { key: "updates_comments", label: "Initial Note", required: false }
+];
+
+const COLUMN_ALIASES = {
+  description: ["description", "desc", "issue", "summary", "title"],
+  jd_ticket_number: ["jd_ticket_number", "jd", "jd_number", "ticket_number", "jd ticket number", "ticket"],
+  category: ["category", "cat", "type"],
+  priority: ["priority", "prio", "urgency"],
+  status: ["status", "state"],
+  assignee: ["assignee", "assigned_to", "assigned to", "owner", "responsible"],
+  manager: ["manager", "supervisor", "lead"],
+  date_opening: ["date_opening", "date_opened", "open_date", "opened", "date ouverture", "date opening"],
+  date_closed: ["date_closed", "date_close", "closed_date", "close_date", "closed"],
+  updates_comments: ["updates_comments", "comments", "notes", "note", "initial_note", "update"]
+};
+
+function autoMapColumn(header) {
+  const normalized = header.toLowerCase().trim().replace(/\s+/g, "_");
+  for (const [field, aliases] of Object.entries(COLUMN_ALIASES)) {
+    if (aliases.some((alias) => alias.replace(/\s+/g, "_") === normalized)) return field;
+  }
+  return "";
+}
+
+function parseCsv(text) {
+  const raw = text.charCodeAt(0) === 0xFEFF ? text.slice(1) : text;
+  const rows = [];
+  let row = [];
+  let field = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+    const next = raw[i + 1];
+    if (inQuotes) {
+      if (ch === '"' && next === '"') { field += '"'; i++; }
+      else if (ch === '"') { inQuotes = false; }
+      else { field += ch; }
+    } else {
+      if (ch === '"') { inQuotes = true; }
+      else if (ch === ',') { row.push(field); field = ""; }
+      else if (ch === '\r' && next === '\n') { row.push(field); field = ""; rows.push(row); row = []; i++; }
+      else if (ch === '\n' || ch === '\r') { row.push(field); field = ""; rows.push(row); row = []; }
+      else { field += ch; }
+    }
+  }
+  if (field || row.length) { row.push(field); rows.push(row); }
+  while (rows.length && rows[rows.length - 1].every((f) => !f.trim())) rows.pop();
+  return rows;
+}
+
+function parseCsvToObjects(text) {
+  const rows = parseCsv(text);
+  if (rows.length < 2) return { headers: [], records: [] };
+  const headers = rows[0].map((h) => h.trim());
+  const records = rows.slice(1).map((row) => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = (row[i] || "").trim(); });
+    return obj;
+  });
+  return { headers, records };
+}
+
+function validateImportRow(row, meta) {
+  const errors = [];
+  if (!row.description) errors.push("Description is required");
+  if (!row.jd_ticket_number) errors.push("JD ticket number is required");
+  if (row.category && !meta.categories.includes(row.category)) errors.push(`Invalid category: "${row.category}"`);
+  if (row.priority && !meta.priorities.includes(row.priority)) errors.push(`Invalid priority: "${row.priority}"`);
+  const status = row.status || "Open";
+  if (!meta.statuses.includes(status)) errors.push(`Invalid status: "${status}"`);
+  if (row.assignee && !meta.users.includes(row.assignee)) errors.push(`Unknown assignee: "${row.assignee}"`);
+  if (row.manager && !meta.managers.includes(row.manager)) errors.push(`Unknown manager: "${row.manager}"`);
+  if (!row.assignee) errors.push("Assignee is required");
+  if (!row.manager) errors.push("Manager is required");
+  if (!row.category) errors.push("Category is required");
+  if (!row.priority) errors.push("Priority is required");
+  if (!row.date_opening) errors.push("Date opened is required");
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date_opening)) errors.push("Date opened must be YYYY-MM-DD");
+  if (row.date_closed && !/^\d{4}-\d{2}-\d{2}$/.test(row.date_closed)) errors.push("Date closed must be YYYY-MM-DD");
+  return errors;
+}
+
+function applyMapping(records, mapping) {
+  return records.map((record) => {
+    const mapped = {};
+    for (const [userCol, systemField] of Object.entries(mapping)) {
+      if (systemField) mapped[systemField] = record[userCol] || "";
+    }
+    return mapped;
+  });
+}
+
+function bindImportEvents() {
+  elements.importCsv.addEventListener("click", openImportModal);
+  elements.openImportFromEntry.addEventListener("click", openImportModal);
+  elements.closeImport.addEventListener("click", closeImportModal);
+  elements.importOverlay.addEventListener("click", (e) => { if (e.target === elements.importOverlay) closeImportModal(); });
+
+  elements.downloadTemplate.addEventListener("click", async () => {
+    try {
+      const response = await fetch("/api/tickets/import-template", {
+        headers: { "X-CSRF-Token": state.csrfToken },
+        credentials: "same-origin"
+      });
+      if (!response.ok) throw new Error("Could not download template.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "ticket-import-template.csv";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      showMessage(error.message, true);
+    }
+  });
+
+  elements.importFileInput.addEventListener("change", (e) => {
+    const file = e.target.files[0];
+    if (file) handleImportFile(file);
+  });
+
+  const dz = elements.importDropZone;
+  dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
+  dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+  dz.addEventListener("drop", (e) => {
+    e.preventDefault();
+    dz.classList.remove("drag-over");
+    const file = e.dataTransfer.files[0];
+    if (file) handleImportFile(file);
+  });
+
+  elements.importProceed.addEventListener("click", showImportPreview);
+  elements.importBackUpload.addEventListener("click", () => showImportStep("upload"));
+  elements.importConfirm.addEventListener("click", runImport);
+  elements.importBackMapping.addEventListener("click", () => showImportStep("mapping"));
+  elements.importDone.addEventListener("click", closeImportModal);
+}
+
+function openImportModal() {
+  if (!state.currentUser || (state.currentUser.role !== "manager" && state.currentUser.role !== "admin")) {
+    showMessage("Import requires manager or admin role.", true);
+    return;
+  }
+  state.importParsed = null;
+  state.importMapping = {};
+  elements.importFileInput.value = "";
+  elements.importDropZone.classList.remove("drag-over");
+  showImportStep("upload");
+  elements.importOverlay.hidden = false;
+}
+
+function closeImportModal() {
+  elements.importOverlay.hidden = true;
+  state.importParsed = null;
+  state.importMapping = {};
+}
+
+function showImportStep(step) {
+  elements.importStepUpload.hidden = step !== "upload";
+  elements.importStepMapping.hidden = step !== "mapping";
+  elements.importStepPreview.hidden = step !== "preview";
+  elements.importStepResults.hidden = step !== "results";
+}
+
+async function handleImportFile(file) {
+  if (!file.name.match(/\.(csv|txt)$/i)) {
+    showMessage("Please upload a .csv file. For Excel, use File → Save As → CSV.", true);
+    return;
+  }
+  try {
+    const text = await file.text();
+    const { headers, records } = parseCsvToObjects(text);
+    if (!headers.length || !records.length) {
+      showMessage("File is empty or has no data rows.", true);
+      return;
+    }
+    state.importParsed = { headers, records, fileName: file.name };
+    const initialMapping = {};
+    for (const header of headers) {
+      initialMapping[header] = autoMapColumn(header);
+    }
+    state.importMapping = initialMapping;
+    elements.importRowCount.textContent = records.length;
+    renderColumnMapping(headers, initialMapping);
+    showImportStep("mapping");
+  } catch (error) {
+    showMessage("Failed to read file: " + error.message, true);
+  }
+}
+
+function renderColumnMapping(headers, mapping) {
+  const fieldOptions = IMPORT_FIELDS.map((f) =>
+    `<option value="${f.key}">${f.label}${f.required ? " *" : ""}</option>`
+  ).join("");
+
+  elements.columnMappingTable.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Your column</th>
+          <th>Sample value</th>
+          <th>Maps to field</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${headers.map((header) => {
+          const sample = state.importParsed.records[0]?.[header] || "";
+          const mapped = mapping[header] || "";
+          const fieldDef = IMPORT_FIELDS.find((f) => f.key === mapped);
+          const statusBadge = mapped
+            ? `<span class="badge success">${fieldDef?.required ? "Required" : "Optional"}</span>`
+            : `<span class="badge neutral">Not mapped</span>`;
+          return `
+            <tr>
+              <td><strong>${escapeHtml(header)}</strong></td>
+              <td class="muted" style="font-size:0.82rem">${escapeHtml(String(sample).slice(0, 60))}</td>
+              <td>
+                <select class="mapping-select" data-column="${escapeHtml(header)}">
+                  <option value="">— skip —</option>
+                  ${fieldOptions}
+                </select>
+              </td>
+              <td id="map-status-${header.replace(/[^a-z0-9]/gi, '_')}">${statusBadge}</td>
+            </tr>
+          `;
+        }).join("")}
+      </tbody>
+    </table>
+  `;
+
+  document.querySelectorAll(".mapping-select").forEach((select) => {
+    const col = select.dataset.column;
+    select.value = mapping[col] || "";
+    select.addEventListener("change", () => {
+      state.importMapping[col] = select.value;
+      const field = IMPORT_FIELDS.find((f) => f.key === select.value);
+      const statusId = `map-status-${col.replace(/[^a-z0-9]/gi, '_')}`;
+      const statusEl = document.getElementById(statusId);
+      if (statusEl) {
+        statusEl.innerHTML = select.value
+          ? `<span class="badge success">${field?.required ? "Required" : "Optional"}</span>`
+          : `<span class="badge neutral">Not mapped</span>`;
+      }
+    });
+  });
+}
+
+function showImportPreview() {
+  if (!state.importParsed) return;
+  const { records, fileName } = state.importParsed;
+  const mapping = state.importMapping;
+
+  const requiredFields = IMPORT_FIELDS.filter((f) => f.required).map((f) => f.key);
+  const mappedSystemFields = Object.values(mapping).filter(Boolean);
+  const missingRequired = requiredFields.filter((f) => !mappedSystemFields.includes(f));
+  if (missingRequired.length) {
+    const labels = missingRequired.map((k) => IMPORT_FIELDS.find((f) => f.key === k)?.label || k);
+    showMessage(`Please map required fields: ${labels.join(", ")}`, true);
+    return;
+  }
+
+  const mapped = applyMapping(records, mapping);
+  const validatedRows = mapped.map((row, i) => ({
+    index: i + 1,
+    row,
+    errors: validateImportRow(row, state.meta)
+  }));
+
+  const validCount = validatedRows.filter((r) => !r.errors.length).length;
+  const errorCount = validatedRows.filter((r) => r.errors.length).length;
+
+  elements.importPreviewSummary.innerHTML = `
+    <span class="import-summary-chip valid">${validCount} valid rows</span>
+    <span class="import-summary-chip error">${errorCount} rows with errors</span>
+    <span class="import-summary-chip neutral">${records.length} total</span>
+  `;
+
+  const previewFields = ["jd_ticket_number", "description", "category", "priority", "status", "assignee", "manager", "date_opening"];
+  elements.importPreviewHead.innerHTML = `
+    <th>#</th><th>Status</th>
+    ${previewFields.map((f) => `<th>${IMPORT_FIELDS.find((x) => x.key === f)?.label || f}</th>`).join("")}
+    <th>Errors</th>
+  `;
+  elements.importPreviewBody.innerHTML = validatedRows.map((item) => {
+    const isValid = !item.errors.length;
+    const statusCell = isValid
+      ? `<span class="badge success">Valid</span>`
+      : `<span class="badge danger">Error</span>`;
+    const errorsCell = item.errors.length
+      ? `<span style="color:var(--danger);font-size:0.78rem">${escapeHtml(item.errors.join("; "))}</span>`
+      : `<span class="muted">—</span>`;
+    return `
+      <tr class="${isValid ? 'import-row-valid' : 'import-row-error'}">
+        <td>${item.index}</td>
+        <td>${statusCell}</td>
+        ${previewFields.map((f) => `<td>${escapeHtml(String(item.row[f] || ""))}</td>`).join("")}
+        <td>${errorsCell}</td>
+      </tr>
+    `;
+  }).join("");
+
+  elements.importConfirm.textContent = `Import ${validCount} valid row${validCount !== 1 ? "s" : ""}`;
+  elements.importConfirm.disabled = validCount === 0;
+  showImportStep("preview");
+  state.importValidatedRows = validatedRows;
+}
+
+async function runImport() {
+  if (!state.importValidatedRows || !state.importParsed) return;
+  const validRows = state.importValidatedRows.filter((r) => !r.errors.length).map((r) => r.row);
+  if (!validRows.length) { showMessage("No valid rows to import.", true); return; }
+
+  elements.importConfirm.disabled = true;
+  elements.importConfirm.textContent = "Importing...";
+
+  try {
+    const result = await apiFetch("/api/tickets/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tickets: validRows,
+        batch_name: `Import ${formatIsoDate(Date.now())}`,
+        file_name: state.importParsed.fileName || ""
+      })
+    });
+
+    const errorItems = (result.errors || []).slice(0, 20).map((e) =>
+      `<div class="import-error-item">Row ${e.row} ${e.jd_ticket_number ? `(${escapeHtml(e.jd_ticket_number)})` : ""}: ${escapeHtml(e.message)}</div>`
+    ).join("");
+
+    elements.importResultsContent.innerHTML = `
+      <div class="import-result-grid">
+        <div class="import-result-stat-card">
+          <span class="import-result-number success-color">${result.created}</span>
+          <span class="import-result-label">tickets created</span>
+        </div>
+        <div class="import-result-stat-card">
+          <span class="import-result-number ${result.skipped ? 'danger-color' : 'muted'}">${result.skipped}</span>
+          <span class="import-result-label">rows skipped</span>
+        </div>
+        <div class="import-result-stat-card">
+          <span class="import-result-number muted">${result.total}</span>
+          <span class="import-result-label">rows total</span>
+        </div>
+      </div>
+      ${result.skipped ? `<p class="eyebrow" style="margin-top:1rem">Errors</p><div class="import-error-list">${errorItems}</div>` : ""}
+      <p class="muted" style="margin-top:1rem;font-size:0.85rem">Batch ID #${result.batch_id} — visible in Import History on the Data Entry tab.</p>
+    `;
+    showImportStep("results");
+    await Promise.all([refreshTickets(), refreshDashboard(), refreshImportHistory()]);
+  } catch (error) {
+    showMessage(error.message, true);
+    elements.importConfirm.disabled = false;
+    elements.importConfirm.textContent = "Import valid rows";
+  }
+}
+
+async function refreshImportHistory() {
+  try {
+    const canSee = state.currentUser && (state.currentUser.role === "manager" || state.currentUser.role === "admin");
+    if (!canSee) return;
+    const data = await apiFetch("/api/import-history");
+    state.importBatches = data.batches;
+    renderImportHistory();
+  } catch {
+    // silently ignore if endpoint unavailable
+  }
+}
+
+function renderImportHistory() {
+  const panel = document.getElementById("import-history-panel");
+  if (!panel) return;
+  if (!state.importBatches.length) {
+    elements.importHistoryList.innerHTML = `<p class="muted">No import batches yet. Use the "Import CSV" button to upload tickets.</p>`;
+    return;
+  }
+  const isAdmin = state.currentUser?.role === "admin";
+  elements.importHistoryList.innerHTML = state.importBatches.map((batch) => `
+    <article class="audit-item">
+      <div class="audit-head">
+        <div>
+          <strong>${escapeHtml(batch.batch_name || `Batch #${batch.id}`)}</strong>
+          ${batch.file_name ? `<span class="muted" style="font-size:0.8rem"> — ${escapeHtml(batch.file_name)}</span>` : ""}
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span class="badge success">${batch.created_count} created</span>
+          ${batch.error_count ? `<span class="badge danger">${batch.error_count} errors</span>` : ""}
+          ${isAdmin ? `<button type="button" class="small-button ghost" style="color:var(--danger)" data-rollback-batch="${batch.id}">Rollback</button>` : ""}
+        </div>
+      </div>
+      <div class="table-subtext">
+        By ${escapeHtml(batch.imported_by)} • ${escapeHtml(formatCommentDate(batch.created_at))} • ${batch.row_count} rows in file
+      </div>
+    </article>
+  `).join("");
+
+  document.querySelectorAll("[data-rollback-batch]").forEach((button) => {
+    button.addEventListener("click", () => rollbackImport(Number(button.dataset.rollbackBatch)));
+  });
+}
+
+async function rollbackImport(batchId) {
+  const batch = state.importBatches.find((b) => b.id === batchId);
+  const name = batch?.batch_name || `Batch #${batchId}`;
+  if (!window.confirm(`Roll back "${name}"?\n\nThis will permanently delete all ${batch?.created_count || 0} tickets created by this import. This cannot be undone.`)) return;
+  try {
+    const result = await apiFetch(`/api/import-history/${batchId}`, { method: "DELETE" });
+    showMessage(`Rollback complete. ${result.tickets_deleted} tickets deleted.`);
+    await Promise.all([refreshTickets(), refreshDashboard(), refreshImportHistory()]);
+  } catch (error) {
+    showMessage(error.message, true);
+  }
+}
+
+// ─── END IMPORT FEATURE ──────────────────────────────────────────────────────
 
 function closeTicketDetail(options = {}) {
   const { preserveHistory = false } = options;

@@ -398,6 +398,176 @@ th { color: var(--muted); font-size: 0.82rem; }
 .comment-meta { display: flex; gap: 8px; align-items: center; }
 .template-row { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* ─── IMPORT MODAL ─────────────────────────────────────────────────────────── */
+
+.import-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 8, 14, 0.82);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 300;
+  padding: 2rem 1rem;
+  overflow-y: auto;
+}
+
+.import-card {
+  width: 100%;
+  max-width: 960px;
+  margin: auto;
+}
+
+.import-step { margin-top: 1.5rem; }
+
+.drop-zone {
+  border: 2px dashed rgba(153, 173, 197, 0.28);
+  border-radius: 18px;
+  padding: 3rem 2rem;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.drop-zone.drag-over {
+  border-color: var(--brand);
+  background: rgba(50, 180, 141, 0.06);
+}
+
+.drop-zone-hint {
+  margin: 0 0 0.75rem;
+  font-size: 1rem;
+  color: var(--text);
+}
+
+.import-browse-label {
+  display: inline-block;
+  border: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--brand), #2ed0a0);
+  color: #07110f;
+  font-weight: 700;
+  padding: 10px 20px;
+  cursor: pointer;
+  font-size: 0.92rem;
+}
+
+.column-mapping-table {
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  overflow: hidden;
+  margin-top: 1rem;
+}
+
+.column-mapping-table table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 0;
+}
+
+.column-mapping-table th,
+.column-mapping-table td {
+  padding: 0.55rem 0.9rem;
+  text-align: left;
+  border-bottom: 1px solid var(--panel-border);
+  font-size: 0.85rem;
+  vertical-align: middle;
+}
+
+.column-mapping-table th {
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.column-mapping-table select {
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.import-preview-summary {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.import-summary-chip {
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.import-summary-chip.valid { background: rgba(78, 212, 168, 0.14); color: var(--success); }
+.import-summary-chip.error { background: rgba(255, 107, 95, 0.14); color: var(--danger); }
+.import-summary-chip.neutral { background: rgba(108, 141, 183, 0.15); color: #b6caf0; }
+
+.import-preview-wrap {
+  max-height: 380px;
+  overflow-y: auto;
+  margin-top: 1rem;
+}
+
+.import-preview-wrap table { min-width: 900px; }
+
+tr.import-row-valid td:first-child { border-left: 3px solid var(--success); }
+tr.import-row-error td:first-child { border-left: 3px solid var(--danger); }
+
+.import-result-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.import-result-stat-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 1.25rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--panel-border);
+}
+
+.import-result-number {
+  font-size: 2.4rem;
+  font-family: "Space Grotesk", sans-serif;
+  font-weight: 700;
+}
+
+.import-result-label {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.success-color { color: var(--success); }
+.danger-color  { color: var(--danger); }
+
+.import-error-list {
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  padding: 0.5rem 0;
+}
+
+.import-error-item {
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--panel-border);
+  color: var(--danger);
+  font-size: 0.82rem;
+}
+
+.import-error-item:last-child { border-bottom: 0; }
+
+/* ─── END IMPORT MODAL ──────────────────────────────────────────────────────── */
+
 @media (max-width: 1400px) {
   .filter-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .webhook-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

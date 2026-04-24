@@ -22,6 +22,7 @@ const WEBHOOK_ALLOWLIST = (process.env.WEBHOOK_ALLOWLIST || '')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_BULK_BODY_BYTES = 5 * 1024 * 1024;
 
 const CATEGORIES = [
   'administrative', 'change request', 'CR', 'Inbound', 'Outbound', 'Inventory', 'WMS', 'UCS', 'Scada', 'Skyfall', 'PIN', 'Toting', 'Shuttle'
@@ -176,6 +177,17 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (webhook_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS import_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_name TEXT,
+    imported_by TEXT NOT NULL,
+    file_name TEXT,
+    row_count INTEGER NOT NULL DEFAULT 0,
+    created_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 `);
 
 ensureColumn('tickets', 'due_date', 'TEXT');
@@ -187,6 +199,7 @@ ensureColumn('user_accounts', 'failed_login_attempts', 'INTEGER NOT NULL DEFAULT
 ensureColumn('user_accounts', 'locked_until', 'TEXT');
 ensureColumn('ticket_comments', 'comment_type', "TEXT NOT NULL DEFAULT 'Update'");
 ensureColumn('webhook_subscriptions', 'secret_encrypted', 'TEXT');
+ensureColumn('tickets', 'batch_id', 'INTEGER');
 
 const secretColumnInfo = db.prepare('PRAGMA table_info(webhook_subscriptions)').all();
 const hasLegacySecret = secretColumnInfo.some((column) => column.name === 'secret');
@@ -333,6 +346,22 @@ const stmtAudit = {
   `)
 };
 
+const stmtImport = {
+  insertBatch: db.prepare(`
+    INSERT INTO import_batches (batch_name, imported_by, file_name, row_count, created_count, error_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  updateBatch: db.prepare('UPDATE import_batches SET created_count = ?, error_count = ? WHERE id = ?'),
+  listBatches: db.prepare(`
+    SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, created_at
+    FROM import_batches ORDER BY id DESC LIMIT 50
+  `),
+  batchById: db.prepare('SELECT * FROM import_batches WHERE id = ?'),
+  deleteBatchTickets: db.prepare('DELETE FROM tickets WHERE batch_id = ?'),
+  deleteBatch: db.prepare('DELETE FROM import_batches WHERE id = ?'),
+  countByBatch: db.prepare('SELECT COUNT(*) AS count FROM tickets WHERE batch_id = ?')
+};
+
 seedUsers();
 seedTicketsAndComments();
 createBackupSnapshot().catch((error) => console.error('[backup]', error));
@@ -352,6 +381,7 @@ function ensurePerformanceIndexes() {
     CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee);
     CREATE INDEX IF NOT EXISTS idx_tickets_manager ON tickets(manager);
     CREATE INDEX IF NOT EXISTS idx_tickets_date_opening ON tickets(date_opening);
+    CREATE INDEX IF NOT EXISTS idx_tickets_batch_id ON tickets(batch_id);
     CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id);
     CREATE INDEX IF NOT EXISTS idx_saved_filters_user_id ON saved_filters(user_id);
   `);
@@ -506,12 +536,12 @@ function sendText(response, statusCode, message, headers = {}) {
   response.end(message);
 }
 
-async function readRequestBody(request) {
+async function readRequestBody(request, limit = MAX_BODY_BYTES) {
   const chunks = [];
   let total = 0;
   for await (const chunk of request) {
     total += chunk.length;
-    if (total > MAX_BODY_BYTES) throw new HttpError(413, 'Request body too large.');
+    if (total > limit) throw new HttpError(413, 'Request body too large.');
     chunks.push(chunk);
   }
   if (chunks.length === 0) return {};
@@ -1321,6 +1351,84 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'GET' && url.pathname === '/api/tickets/import-template') {
+      assertRole(auth, 'manager');
+      const headers = ['description', 'jd_ticket_number', 'category', 'priority', 'status', 'assignee', 'manager', 'date_opening', 'date_closed', 'updates_comments'];
+      const exampleRow = [
+        'Example issue description',
+        '6914999',
+        CATEGORIES[0],
+        'P2 medium',
+        'Open',
+        getAllowedAssignees()[0] || 'Samuel',
+        getManagers()[0] || 'Adriano',
+        formatIsoDate(Date.now()),
+        '',
+        'Opening context for the ticket.'
+      ];
+      const csv = [headers.join(','), exampleRow.map(csvCell).join(',')].join('\n');
+      sendText(response, 200, csv, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="ticket-import-template.csv"'
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/tickets/bulk') {
+      assertRole(auth, 'manager');
+      const payload = await readRequestBody(request, MAX_BULK_BODY_BYTES);
+      const rows = Array.isArray(payload.tickets) ? payload.tickets : [];
+      if (!rows.length) throw new HttpError(400, 'No tickets provided.');
+      if (rows.length > 500) throw new HttpError(400, 'Maximum 500 tickets per import.');
+      const batchName = String(payload.batch_name || `Import ${formatIsoDate(Date.now())}`).trim().slice(0, 200);
+      const fileName = String(payload.file_name || '').trim().slice(0, 255);
+
+      const batchResult = stmtImport.insertBatch.run(batchName, auth.name, fileName, rows.length, 0, 0);
+      const batchId = batchResult.lastInsertRowid;
+      const createdIds = [];
+      const errors = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        try {
+          const preprocessed = { ...row, status: String(row.status || 'Open').trim() || 'Open' };
+          const ticket = normalizeTicketInput(preprocessed);
+          const existing = db.prepare('SELECT id FROM tickets WHERE jd_ticket_number = ?').get(ticket.jd_ticket_number);
+          if (existing) {
+            errors.push({ row: i + 1, jd_ticket_number: ticket.jd_ticket_number, message: `Duplicate: JD ${ticket.jd_ticket_number} already exists.` });
+            continue;
+          }
+          const due = calculateDueDate(ticket.date_opening, ticket.priority);
+          const result = stmtTickets.insert.run(
+            ticket.description, ticket.jd_ticket_number, ticket.category, ticket.updates_comments,
+            ticket.priority, ticket.date_opening, ticket.date_closed, ticket.status,
+            ticket.assignee, ticket.manager, due
+          );
+          const newId = result.lastInsertRowid;
+          if (ticket.updates_comments) stmtComments.insert.run(newId, ticket.assignee, 'Update', ticket.updates_comments);
+          createdIds.push(newId);
+        } catch (error) {
+          errors.push({ row: i + 1, jd_ticket_number: String(row.jd_ticket_number || ''), message: error instanceof HttpError ? error.message : 'Validation error.' });
+        }
+      }
+
+      if (createdIds.length) {
+        const placeholders = createdIds.map(() => '?').join(',');
+        db.prepare(`UPDATE tickets SET batch_id = ? WHERE id IN (${placeholders})`).run(batchId, ...createdIds);
+      }
+      stmtImport.updateBatch.run(createdIds.length, errors.length, batchId);
+      logAudit('import_batch', batchId, 'bulk_import', auth.name, {
+        batch_name: batchName, file_name: fileName, row_count: rows.length,
+        created: createdIds.length, errors: errors.length
+      });
+      for (const id of createdIds) {
+        const row = stmtTickets.byId.get(id);
+        if (row) emitWebhooks('ticket.created', hydrateTicket(row)).catch(() => {});
+      }
+      sendJson(response, 201, { batch_id: batchId, created: createdIds.length, skipped: errors.length, errors, total: rows.length });
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
@@ -1422,6 +1530,26 @@ const server = createServer(async (request, response) => {
       logAudit('ticket_comment', id, 'create', auth.name, { comment_id: comment.id, author: comment.author, comment_type: comment.comment_type });
       await emitWebhooks('ticket.comment.created', comment);
       sendJson(response, 201, { comment });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/import-history') {
+      assertRole(auth, 'manager');
+      sendJson(response, 200, { batches: stmtImport.listBatches.all() });
+      return;
+    }
+
+    if (request.method === 'DELETE' && url.pathname.match(/^\/api\/import-history\/\d+$/)) {
+      assertRole(auth, 'admin');
+      const id = Number(url.pathname.split('/').pop());
+      if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid batch id.');
+      const batch = stmtImport.batchById.get(id);
+      if (!batch) throw new HttpError(404, 'Import batch not found.');
+      const { count } = stmtImport.countByBatch.get(id);
+      stmtImport.deleteBatchTickets.run(id);
+      stmtImport.deleteBatch.run(id);
+      logAudit('import_batch', id, 'rollback', auth.name, { batch_name: batch.batch_name, tickets_deleted: count });
+      sendJson(response, 200, { success: true, tickets_deleted: count });
       return;
     }
 

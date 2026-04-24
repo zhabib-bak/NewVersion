@@ -89,6 +89,17 @@
         </nav>
 
         <section id="tab-entry" class="tab-panel">
+          <section class="panel" id="import-history-panel">
+            <div class="chart-head">
+              <div>
+                <p class="eyebrow">Import History</p>
+                <h3>Bulk import batches</h3>
+              </div>
+              <button type="button" id="open-import-from-entry" class="ghost small-button">New import</button>
+            </div>
+            <div id="import-history-list" class="audit-list"></div>
+          </section>
+
           <section class="panel">
             <div class="chart-head">
               <div>
@@ -130,6 +141,7 @@
                 <h3>Search, SLA, and execution</h3>
               </div>
               <div class="actions-inline">
+                <button id="import-csv" type="button" class="ghost">Import CSV</button>
                 <button id="export-csv" type="button" class="ghost">Export CSV</button>
                 <span id="ticket-count" class="pill"></span>
               </div>
@@ -351,6 +363,68 @@
         <strong class="summary-value"></strong>
       </article>
     </template>
+
+    <!-- Import CSV Modal -->
+    <div id="import-overlay" class="import-overlay" hidden>
+      <div class="import-card panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Bulk Import</p>
+            <h3>Import tickets from CSV</h3>
+          </div>
+          <button type="button" id="close-import" class="ghost">Close</button>
+        </div>
+
+        <!-- Step 1: Upload -->
+        <div id="import-step-upload" class="import-step">
+          <div class="drop-zone" id="import-drop-zone">
+            <p class="drop-zone-hint">Drag &amp; drop a <strong>.csv</strong> file here</p>
+            <p class="muted" style="margin:0.5rem 0">— or —</p>
+            <label class="import-browse-label" for="import-file-input">Browse file</label>
+            <input type="file" id="import-file-input" accept=".csv,.txt" hidden />
+            <p class="muted" style="margin-top:1rem;font-size:0.85rem">For Excel files: <em>File → Save As → CSV UTF-8</em></p>
+          </div>
+          <div style="margin-top:1rem">
+            <button type="button" id="download-template" class="ghost small-button">Download template CSV</button>
+          </div>
+        </div>
+
+        <!-- Step 2: Column Mapping -->
+        <div id="import-step-mapping" class="import-step" hidden>
+          <p class="eyebrow">Step 2 — Column Mapping</p>
+          <p class="muted">Map your file's columns to ticket fields. Required fields must be mapped.</p>
+          <div id="column-mapping-table" class="column-mapping-table"></div>
+          <div class="actions" style="margin-top:1rem">
+            <button type="button" id="import-proceed">Preview <span id="import-row-count">0</span> rows</button>
+            <button type="button" id="import-back-upload" class="ghost">Back</button>
+          </div>
+        </div>
+
+        <!-- Step 3: Preview -->
+        <div id="import-step-preview" class="import-step" hidden>
+          <p class="eyebrow">Step 3 — Preview</p>
+          <div id="import-preview-summary" class="import-preview-summary"></div>
+          <div class="table-wrapper import-preview-wrap">
+            <table>
+              <thead><tr id="import-preview-head"></tr></thead>
+              <tbody id="import-preview-body"></tbody>
+            </table>
+          </div>
+          <div class="actions" style="margin-top:1rem">
+            <button type="button" id="import-confirm">Import valid rows</button>
+            <button type="button" id="import-back-mapping" class="ghost">Back</button>
+          </div>
+        </div>
+
+        <!-- Step 4: Results -->
+        <div id="import-step-results" class="import-step" hidden>
+          <div id="import-results-content" class="import-results"></div>
+          <div class="actions" style="margin-top:1.5rem">
+            <button type="button" id="import-done">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/app.js"></script>
   </body>
