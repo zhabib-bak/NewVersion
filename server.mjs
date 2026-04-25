@@ -6,6 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { URL } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
+import { createConnection } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = process.cwd();
@@ -23,6 +25,12 @@ const WEBHOOK_ALLOWLIST = (process.env.WEBHOOK_ALLOWLIST || '')
   .filter(Boolean);
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_BULK_BODY_BYTES = 5 * 1024 * 1024;
+const SMTP_HOST = process.env.SMTP_HOST || '';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_FROM = process.env.SMTP_FROM || 'Ticket Tracker <no-reply@localhost>';
+const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
 
 const CATEGORIES = [
   'administrative', 'change request', 'CR', 'Inbound', 'Outbound', 'Inventory', 'WMS', 'UCS', 'Scada', 'Skyfall', 'PIN', 'Toting', 'Shuttle'
@@ -210,6 +218,7 @@ ensureColumn('user_accounts', 'auth_secret_hash', 'TEXT');
 ensureColumn('user_accounts', 'password_reset_required', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('user_accounts', 'failed_login_attempts', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('user_accounts', 'locked_until', 'TEXT');
+ensureColumn('user_accounts', 'email', 'TEXT');
 ensureColumn('ticket_comments', 'comment_type', "TEXT NOT NULL DEFAULT 'Update'");
 ensureColumn('webhook_subscriptions', 'secret_encrypted', 'TEXT');
 ensureColumn('tickets', 'batch_id', 'INTEGER');
@@ -234,12 +243,12 @@ const stmtUsers = {
   byId: db.prepare('SELECT * FROM user_accounts WHERE id = ?'),
   insert: db.prepare(`
     INSERT OR IGNORE INTO user_accounts (
-      name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 0, NULL, CURRENT_TIMESTAMP)
+      name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)
   `),
   update: db.prepare(`
     UPDATE user_accounts
-    SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, email = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `),
   setSecret: db.prepare(`
@@ -471,7 +480,7 @@ function decryptSecret(payload) {
 
 function seedUsers() {
   for (const user of SEED_USERS) {
-    stmtUsers.insert.run(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), 1);
+    stmtUsers.insert.run(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), 1, '');
   }
   const rows = db.prepare('SELECT id, auth_secret_hash FROM user_accounts').all();
   for (const row of rows) {
@@ -741,6 +750,7 @@ function normalizeUserInput(input, currentName = null) {
   const role = String(input.role || '').trim();
   const active = Number(input.active ? 1 : 0);
   const password = String(input.password || '').trim();
+  const email = String(input.email || '').trim();
   if (!name) throw new HttpError(400, 'User name is required.');
   if (!USER_ROLES.includes(role)) throw new HttpError(400, 'Invalid role.');
   const existing = stmtUsers.byName.get(name);
@@ -752,7 +762,7 @@ function normalizeUserInput(input, currentName = null) {
     secretHash = hashPassword(password);
     passwordResetRequired = Number(Boolean(input.password_reset_required));
   }
-  return { name, role, active, secretHash, passwordResetRequired };
+  return { name, role, active, secretHash, passwordResetRequired, email };
 }
 
 function normalizeWebhookInput(input) {
@@ -1042,6 +1052,101 @@ async function emitWebhooks(eventName, payload) {
   }
 }
 
+async function sendEmail(to, subject, body) {
+  if (!SMTP_HOST || !to) return;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('SMTP timeout')), 15000);
+    const lines = [];
+    let socket;
+    let tlsSocket;
+    let step = 0;
+
+    const send = (line) => {
+      const s = tlsSocket || socket;
+      if (s) s.write(line + '\r\n');
+    };
+
+    const message = [
+      `From: ${SMTP_FROM}`,
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/plain; charset=utf-8`,
+      ``,
+      body
+    ].join('\r\n');
+
+    const handleData = (data) => {
+      const response = data.toString();
+      const code = parseInt(response.slice(0, 3), 10);
+      if (SMTP_SECURE) {
+        // Direct TLS flow
+        if (step === 0 && code === 220) { step = 1; send(`EHLO localhost`); }
+        else if (step === 1 && code === 250) { step = 2; send(`AUTH LOGIN`); }
+        else if (step === 2 && code === 334) { step = 3; send(Buffer.from(SMTP_USER).toString('base64')); }
+        else if (step === 3 && code === 334) { step = 4; send(Buffer.from(SMTP_PASS).toString('base64')); }
+        else if (step === 4 && code === 235) { step = 5; send(`MAIL FROM:<${SMTP_FROM.match(/<(.+)>/)?.[1] || SMTP_FROM}>`); }
+        else if (step === 5 && code === 250) { step = 6; send(`RCPT TO:<${to}>`); }
+        else if (step === 6 && code === 250) { step = 7; send(`DATA`); }
+        else if (step === 7 && code === 354) { step = 8; send(message + '\r\n.'); }
+        else if (step === 8 && code === 250) { step = 9; send(`QUIT`); clearTimeout(timeout); resolve(); }
+        else if (code >= 400) { clearTimeout(timeout); reject(new Error(`SMTP error ${code}: ${response.slice(4).trim()}`)); }
+      } else {
+        // STARTTLS flow
+        if (step === 0 && code === 220) { step = 1; send(`EHLO localhost`); }
+        else if (step === 1 && code === 250) { step = 2; send(`STARTTLS`); }
+        else if (step === 2 && code === 220) {
+          step = 3;
+          tlsSocket = tlsConnect({ socket, servername: SMTP_HOST, rejectUnauthorized: false });
+          tlsSocket.on('data', handleData);
+          tlsSocket.on('error', (e) => { clearTimeout(timeout); reject(e); });
+          send(`EHLO localhost`);
+        }
+        else if (step === 3 && code === 250) { step = 4; send(`AUTH LOGIN`); }
+        else if (step === 4 && code === 334) { step = 5; send(Buffer.from(SMTP_USER).toString('base64')); }
+        else if (step === 5 && code === 334) { step = 6; send(Buffer.from(SMTP_PASS).toString('base64')); }
+        else if (step === 6 && code === 235) { step = 7; send(`MAIL FROM:<${SMTP_FROM.match(/<(.+)>/)?.[1] || SMTP_FROM}>`); }
+        else if (step === 7 && code === 250) { step = 8; send(`RCPT TO:<${to}>`); }
+        else if (step === 8 && code === 250) { step = 9; send(`DATA`); }
+        else if (step === 9 && code === 354) { step = 10; send(message + '\r\n.'); }
+        else if (step === 10 && code === 250) { step = 11; send(`QUIT`); clearTimeout(timeout); resolve(); }
+        else if (code >= 400) { clearTimeout(timeout); reject(new Error(`SMTP error ${code}: ${response.slice(4).trim()}`)); }
+      }
+    };
+
+    if (SMTP_SECURE) {
+      tlsSocket = tlsConnect(SMTP_PORT, SMTP_HOST, { rejectUnauthorized: false });
+      tlsSocket.on('data', handleData);
+      tlsSocket.on('error', (e) => { clearTimeout(timeout); reject(e); });
+    } else {
+      socket = createConnection(SMTP_PORT, SMTP_HOST);
+      socket.on('data', handleData);
+      socket.on('error', (e) => { clearTimeout(timeout); reject(e); });
+    }
+  });
+}
+
+function getUserEmail(name) {
+  const user = stmtUsers.byName.get(name);
+  return user?.email || null;
+}
+
+function buildTicketEmailBody(ticket) {
+  return [
+    `Ticket #${ticket.id} — ${ticket.jd_ticket_number}`,
+    ``,
+    `Description: ${ticket.description}`,
+    `Category:    ${ticket.category}`,
+    `Priority:    ${ticket.priority}`,
+    `Status:      ${ticket.status}`,
+    `Assignee:    ${ticket.assignee}`,
+    `Manager:     ${ticket.manager}`,
+    `Due date:    ${ticket.due_date || 'N/A'}`,
+    ``,
+    `Open in your ticket tracker to view details and add comments.`
+  ].join('\n');
+}
+
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'application/javascript; charset=utf-8',
@@ -1226,7 +1331,7 @@ const server = createServer(async (request, response) => {
       const payload = normalizeUserInput(await readRequestBody(request));
       const secretHash = payload.secretHash || hashPassword(DEFAULT_SEED_PASSWORD);
       const passwordResetRequired = payload.secretHash ? payload.passwordResetRequired : 1;
-      const result = stmtUsers.insert.run(payload.name, payload.role, payload.active, secretHash, passwordResetRequired);
+      const result = stmtUsers.insert.run(payload.name, payload.role, payload.active, secretHash, passwordResetRequired, payload.email || '');
       if (result.changes === 0) throw new HttpError(409, 'User already exists.');
       const user = stmtUsers.byId.get(result.lastInsertRowid);
       logAudit('user', user.id, 'create', auth.name, { name: user.name, role: user.role, active: user.active });
@@ -1242,7 +1347,7 @@ const server = createServer(async (request, response) => {
       if (!current) throw new HttpError(404, 'User not found.');
       const payload = normalizeUserInput(await readRequestBody(request), current.name);
       const nextResetRequired = payload.secretHash ? payload.passwordResetRequired : current.password_reset_required;
-      stmtUsers.update.run(payload.name, payload.role, payload.active, payload.secretHash, nextResetRequired, id);
+      stmtUsers.update.run(payload.name, payload.role, payload.active, payload.secretHash, nextResetRequired, payload.email || '', id);
       if (payload.secretHash) stmtSessions.deleteByUser.run(id);
       logAudit('user', id, 'update', auth.name, { before: { name: current.name, role: current.role, active: current.active }, after: { name: payload.name, role: payload.role, active: payload.active, password_reset_required: nextResetRequired } });
       const user = stmtUsers.byId.get(id);
@@ -1459,6 +1564,24 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    // GET /api/tickets/:id/attachments/:attachmentId — download (must be before the generic GET /api/tickets/:id route)
+    if (request.method === 'GET' && url.pathname.match(/^\/api\/tickets\/\d+\/attachments\/\d+$/)) {
+      assertRole(auth, 'user');
+      const parts = url.pathname.split('/');
+      const ticketId = Number(parts[3]);
+      const attachmentId = Number(parts[5]);
+      const attachment = stmtAttachments.byId.get(attachmentId, ticketId);
+      if (!attachment) throw new HttpError(404, 'Attachment not found.');
+      response.writeHead(200, securityHeaders({
+        'Content-Type': attachment.mimetype,
+        'Content-Disposition': `attachment; filename="${attachment.filename}"`,
+        'Content-Length': String(attachment.size_bytes),
+        'Cache-Control': 'private, max-age=3600'
+      }));
+      createReadStream(attachment.storage_path).pipe(response);
+      return;
+    }
+
     if (request.method === 'GET' && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
@@ -1491,6 +1614,10 @@ const server = createServer(async (request, response) => {
       const ticket = hydrateTicket(row);
       logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
       await emitWebhooks('ticket.created', ticket);
+      const assigneeEmail = getUserEmail(ticket.assignee);
+      if (assigneeEmail) {
+        sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      }
       sendJson(response, 201, { ticket });
       return;
     }
@@ -1530,6 +1657,14 @@ const server = createServer(async (request, response) => {
         after: { status: ticket.status, priority: ticket.priority, assignee: ticket.assignee, manager: ticket.manager }
       });
       await emitWebhooks('ticket.updated', ticket);
+      if (current.assignee !== payload.assignee) {
+        const newAssigneeEmail = getUserEmail(ticket.assignee);
+        if (newAssigneeEmail) sendEmail(newAssigneeEmail, `[Assigned to you #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      }
+      if (current.status !== payload.status) {
+        const managerEmail = getUserEmail(ticket.manager);
+        if (managerEmail) sendEmail(managerEmail, `[Status changed #${ticket.id}] ${current.status} → ${ticket.status}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      }
       sendJson(response, 200, { ticket });
       return;
     }
@@ -1580,6 +1715,45 @@ const server = createServer(async (request, response) => {
       stmtImport.deleteBatch.run(id);
       logAudit('import_batch', id, 'rollback', auth.name, { batch_name: batch.batch_name, tickets_deleted: count });
       sendJson(response, 200, { success: true, tickets_deleted: count });
+      return;
+    }
+
+    // POST /api/tickets/:id/attachments — upload (base64 JSON body)
+    if (request.method === 'POST' && url.pathname.match(/^\/api\/tickets\/\d+\/attachments$/)) {
+      assertRole(auth, 'user');
+      const ticketId = Number(url.pathname.split('/')[3]);
+      const exists = stmtTickets.byId.get(ticketId);
+      if (!exists) throw new HttpError(404, 'Ticket not found.');
+      const payload = await readRequestBody(request, MAX_BULK_BODY_BYTES);
+      const filename = String(payload.filename || '').trim().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+      const mimetype = String(payload.mimetype || '').trim();
+      const data = String(payload.data || '');
+      const ALLOWED_TYPES = ['image/jpeg','image/png','image/gif','image/webp','application/pdf','text/plain','text/csv'];
+      if (!filename) throw new HttpError(400, 'Filename is required.');
+      if (!ALLOWED_TYPES.includes(mimetype)) throw new HttpError(400, `File type not allowed: ${mimetype}`);
+      const buffer = Buffer.from(data, 'base64');
+      if (buffer.length > 8 * 1024 * 1024) throw new HttpError(400, 'File too large (max 8 MB).');
+      const storageName = `${randomUUID()}-${filename}`;
+      const storagePath = join(DATA_DIR, 'uploads', storageName);
+      await writeFile(storagePath, buffer);
+      const result = stmtAttachments.insert.run(ticketId, filename, mimetype, buffer.length, storagePath, auth.name);
+      logAudit('ticket_attachment', ticketId, 'upload', auth.name, { filename, mimetype, size_bytes: buffer.length });
+      sendJson(response, 201, { id: result.lastInsertRowid, ticket_id: ticketId, filename, mimetype, size_bytes: buffer.length, uploaded_by: auth.name });
+      return;
+    }
+
+    // DELETE /api/tickets/:id/attachments/:attachmentId
+    if (request.method === 'DELETE' && url.pathname.match(/^\/api\/tickets\/\d+\/attachments\/\d+$/)) {
+      assertRole(auth, 'manager');
+      const parts = url.pathname.split('/');
+      const ticketId = Number(parts[3]);
+      const attachmentId = Number(parts[5]);
+      const attachment = stmtAttachments.byId.get(attachmentId, ticketId);
+      if (!attachment) throw new HttpError(404, 'Attachment not found.');
+      await unlink(attachment.storage_path).catch(() => {});
+      stmtAttachments.delete.run(attachmentId, ticketId);
+      logAudit('ticket_attachment', ticketId, 'delete', auth.name, { filename: attachment.filename });
+      sendJson(response, 200, { success: true });
       return;
     }
 

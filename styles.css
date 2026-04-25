@@ -578,6 +578,21 @@ tr.import-row-error td:first-child { border-left: 3px solid var(--danger); }
 .pagination-info { color: var(--muted); font-size: 0.88rem; }
 #page-prev:disabled, #page-next:disabled { opacity: 0.35; cursor: default; }
 
+.attachments-section { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--panel-border); }
+.attachment-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(153,173,197,0.1);
+  font-size: 0.85rem;
+  margin-bottom: 6px;
+}
+.attachment-upload { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
 @media (max-width: 1400px) {
   .filter-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .webhook-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

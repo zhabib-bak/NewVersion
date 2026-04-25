@@ -773,6 +773,75 @@ function renderTicketDetail() {
         .join("")
     : `<p class="empty-state">No comments yet on this ticket.</p>`;
   elements.detailNewComment.value = "";
+  renderAttachments(ticket);
+}
+
+function renderAttachments(ticket) {
+  const container = document.getElementById('attachments-section');
+  if (!container) return;
+  const isManager = state.currentUser && (state.currentUser.role === 'manager' || state.currentUser.role === 'admin');
+  const attachments = ticket.attachments || [];
+  container.innerHTML = `
+    <p class="eyebrow" style="margin-bottom:0.5rem">Attachments (${attachments.length})</p>
+    ${attachments.map(a => `
+      <div class="attachment-item">
+        <span>${escapeHtml(a.filename)} <span class="muted">(${formatBytes(a.size_bytes)})</span></span>
+        <div style="display:flex;gap:6px">
+          <a href="/api/tickets/${ticket.id}/attachments/${a.id}" class="small-button ghost" style="text-decoration:none;padding:5px 10px;border-radius:10px;border:1px solid rgba(153,173,197,0.16);font-size:0.82rem">Download</a>
+          ${isManager ? `<button type="button" class="small-button ghost" style="color:var(--danger)" data-delete-attachment="${a.id}">Delete</button>` : ''}
+        </div>
+      </div>
+    `).join('')}
+    <div class="attachment-upload">
+      <label class="ghost small-button" for="attachment-file-input" style="cursor:pointer;padding:7px 10px;border-radius:10px;border:1px solid rgba(153,173,197,0.16)">Attach file</label>
+      <input type="file" id="attachment-file-input" accept="image/jpeg,image/png,image/gif,image/webp,application/pdf,text/plain,text/csv" hidden />
+      <span class="muted" style="font-size:0.8rem">Max 8 MB · JPG, PNG, PDF, CSV, TXT</span>
+    </div>
+  `;
+  container.querySelectorAll('[data-delete-attachment]').forEach(btn => {
+    btn.addEventListener('click', () => deleteAttachment(ticket.id, Number(btn.dataset.deleteAttachment)));
+  });
+  const fileInput = container.querySelector('#attachment-file-input');
+  fileInput?.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (file) uploadAttachment(ticket.id, file);
+  });
+}
+
+async function uploadAttachment(ticketId, file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result.split(',')[1];
+      try {
+        await apiFetch(`/api/tickets/${ticketId}/attachments`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, mimetype: file.type, data: base64 })
+        });
+        showMessage('File attached.');
+        await openTicketDetail(ticketId);
+        resolve();
+      } catch (error) { showMessage(error.message, true); reject(error); }
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function deleteAttachment(ticketId, attachmentId) {
+  if (!window.confirm('Delete this attachment?')) return;
+  try {
+    await apiFetch(`/api/tickets/${ticketId}/attachments/${attachmentId}`, { method: 'DELETE' });
+    showMessage('Attachment deleted.');
+    await openTicketDetail(ticketId);
+  } catch (error) { showMessage(error.message, true); }
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 async function saveOriginalTicket(event) {
