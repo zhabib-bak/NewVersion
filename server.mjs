@@ -195,6 +195,8 @@ db.exec(`
     row_count INTEGER NOT NULL DEFAULT 0,
     created_count INTEGER NOT NULL DEFAULT 0,
     error_count INTEGER NOT NULL DEFAULT 0,
+    rolled_back INTEGER NOT NULL DEFAULT 0,
+    rolled_back_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -1404,6 +1406,13 @@ const server = createServer(async (request, response) => {
       const entityId = entityIdValue ? Number(entityIdValue) : null;
       const rows = stmtAudit.list.all(entityType, entityType, entityId, entityId).map((row) => ({ ...row, details_json: JSON.parse(row.details_json) }));
       sendJson(response, 200, { events: rows });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/import-history') {
+      assertRole(auth, 'manager');
+      const batches = db.prepare('SELECT id, imported_by, row_count, filename, rolled_back, rolled_back_at, created_at FROM import_batches ORDER BY id DESC LIMIT 100').all();
+      sendJson(response, 200, { batches });
       return;
     }
 
