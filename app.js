@@ -92,6 +92,7 @@ const elements = {
   userForm: document.querySelector("#user-form"),
   userId: document.querySelector("#user-id"),
   userName: document.querySelector("#user-name"),
+  userEmail: document.querySelector("#user-email"),
   userRole: document.querySelector("#user-role"),
   userPassword: document.querySelector("#user-password"),
   userPasswordResetRequired: document.querySelector("#user-password-reset-required"),
@@ -898,6 +899,7 @@ async function saveUser(event) {
   event.preventDefault();
   const payload = {
     name: elements.userName.value,
+    email: elements.userEmail.value,
     role: elements.userRole.value,
     active: elements.userActive.checked,
     password: elements.userPassword.value,
@@ -950,6 +952,7 @@ function populateUserForm(id) {
   if (!user) return;
   elements.userId.value = user.id;
   elements.userName.value = user.name;
+  elements.userEmail.value = user.email || '';
   elements.userRole.value = user.role;
   elements.userActive.checked = Boolean(user.active);
   elements.userPassword.value = "";
@@ -970,6 +973,7 @@ async function deleteUser(id) {
 function resetUserForm() {
   elements.userForm.reset();
   elements.userId.value = "";
+  elements.userEmail.value = '';
   elements.userSubmit.textContent = "Save user";
   elements.userActive.checked = true;
   elements.userPasswordResetRequired.checked = true;
