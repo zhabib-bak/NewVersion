@@ -16,7 +16,10 @@ const state = {
   webhookDeliveries: [],
   importBatches: [],
   importParsed: null,
-  importMapping: {}
+  importMapping: {},
+  currentPage: 1,
+  totalPages: 1,
+  totalTickets: 0
 };
 
 const elements = {
@@ -144,9 +147,13 @@ function bindEvents() {
   elements.loginForm.addEventListener("submit", login);
   elements.logoutButton.addEventListener("click", logout);
   elements.passwordResetForm.addEventListener("submit", changePassword);
-  elements.filtersForm.addEventListener("input", debounce(refreshTickets, 220));
+  elements.filtersForm.addEventListener("input", debounce(() => {
+    state.currentPage = 1;
+    refreshTickets();
+  }, 220));
   elements.clearFilters.addEventListener("click", () => {
     elements.filtersForm.reset();
+    state.currentPage = 1;
     refreshTickets();
   });
   elements.saveView.addEventListener("click", saveView);
@@ -391,10 +398,15 @@ function applySavedView(id) {
 async function refreshTickets() {
   try {
     const params = new URLSearchParams(new FormData(elements.filtersForm));
+    params.set("page", state.currentPage);
+    params.set("per_page", "50");
     const data = await apiFetch(`/api/tickets?${params.toString()}`);
     state.tickets = data.tickets;
+    state.totalPages = data.totalPages;
+    state.totalTickets = data.total;
     renderTickets();
     renderKanban();
+    renderPagination();
   } catch (error) {
     showMessage(error.message, true);
   }
@@ -456,7 +468,10 @@ function renderTabs() {
 }
 
 function renderTickets() {
-  elements.ticketCount.textContent = `${state.tickets.length} tickets`;
+  const { currentPage, totalTickets, tickets } = state;
+  const from = totalTickets === 0 ? 0 : (currentPage - 1) * 50 + 1;
+  const to = Math.min(currentPage * 50, totalTickets);
+  elements.ticketCount.textContent = totalTickets === 0 ? "0 tickets" : `Showing ${from}–${to} of ${totalTickets} tickets`;
   elements.ticketsTableBody.innerHTML = state.tickets
     .map(
       (ticket) => `
@@ -527,6 +542,21 @@ function renderKanban() {
       await updateTicketStatus(ticket, targetStatus);
     });
   });
+}
+
+function renderPagination() {
+  const el = document.getElementById('pagination-controls');
+  if (!el) return;
+  const { currentPage, totalPages, totalTickets, tickets } = state;
+  const from = totalTickets === 0 ? 0 : (currentPage - 1) * 50 + 1;
+  const to = Math.min(currentPage * 50, totalTickets);
+  el.innerHTML = totalPages <= 1 ? '' : `
+    <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>← Prev</button>
+    <span class="pagination-info">Page ${currentPage} of ${totalPages} &nbsp;·&nbsp; ${from}–${to} of ${totalTickets} tickets</span>
+    <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
+  `;
+  document.getElementById('page-prev')?.addEventListener('click', () => { state.currentPage = Math.max(1, state.currentPage - 1); refreshTickets(); });
+  document.getElementById('page-next')?.addEventListener('click', () => { state.currentPage = Math.min(state.totalPages, state.currentPage + 1); refreshTickets(); });
 }
 
 async function updateTicketStatus(ticket, targetStatus) {

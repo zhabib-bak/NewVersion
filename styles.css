@@ -568,6 +568,16 @@ tr.import-row-error td:first-child { border-left: 3px solid var(--danger); }
 
 /* ─── END IMPORT MODAL ──────────────────────────────────────────────────────── */
 
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 14px 0 4px;
+}
+.pagination-info { color: var(--muted); font-size: 0.88rem; }
+#page-prev:disabled, #page-next:disabled { opacity: 0.35; cursor: default; }
+
 @media (max-width: 1400px) {
   .filter-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .webhook-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

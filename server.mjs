@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { stat, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { stat, copyFile, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -75,6 +75,7 @@ const RATE_LIMITS = {
 
 mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(BACKUP_DIR, { recursive: true });
+mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
 await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
@@ -187,6 +188,18 @@ db.exec(`
     created_count INTEGER NOT NULL DEFAULT 0,
     error_count INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS ticket_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    mimetype TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    storage_path TEXT NOT NULL,
+    uploaded_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
   );
 `);
 
@@ -360,6 +373,13 @@ const stmtImport = {
   deleteBatchTickets: db.prepare('DELETE FROM tickets WHERE batch_id = ?'),
   deleteBatch: db.prepare('DELETE FROM import_batches WHERE id = ?'),
   countByBatch: db.prepare('SELECT COUNT(*) AS count FROM tickets WHERE batch_id = ?')
+};
+
+const stmtAttachments = {
+  listByTicket: db.prepare('SELECT id, ticket_id, filename, mimetype, size_bytes, uploaded_by, created_at FROM ticket_attachments WHERE ticket_id = ? ORDER BY id ASC'),
+  insert: db.prepare('INSERT INTO ticket_attachments (ticket_id, filename, mimetype, size_bytes, storage_path, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)'),
+  byId: db.prepare('SELECT * FROM ticket_attachments WHERE id = ? AND ticket_id = ?'),
+  delete: db.prepare('DELETE FROM ticket_attachments WHERE id = ? AND ticket_id = ?')
 };
 
 seedUsers();
@@ -782,11 +802,15 @@ function hydrateTicket(row) {
     ...ticket,
     comments,
     comment_count: comments.length,
-    last_comment_preview: comments.length ? comments.at(-1).body : ''
+    last_comment_preview: comments.length ? comments.at(-1).body : '',
+    attachments: stmtAttachments.listByTicket.all(row.id)
   };
 }
 
 function listTickets(searchParams) {
+  const page = Math.max(1, Number(searchParams.get('page') || 1));
+  const perPage = Math.min(200, Math.max(10, Number(searchParams.get('per_page') || 50)));
+
   const filters = [];
   const values = [];
   const q = (searchParams.get('q') || '').trim();
@@ -846,7 +870,11 @@ function listTickets(searchParams) {
   if (agingMin !== null && Number.isFinite(agingMin)) rows = rows.filter((ticket) => ticket.aging >= agingMin);
   if (agingMax !== null && Number.isFinite(agingMax)) rows = rows.filter((ticket) => ticket.aging <= agingMax);
 
-  return rows;
+  const total = rows.length;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const safePage = Math.min(page, totalPages);
+  const tickets = rows.slice((safePage - 1) * perPage, safePage * perPage);
+  return { tickets, total, page: safePage, perPage, totalPages };
 }
 
 function aggregateByPeriod(rows, field, mode) {
@@ -1337,14 +1365,16 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/api/tickets') {
       assertRole(auth, 'user');
-      sendJson(response, 200, { tickets: listTickets(url.searchParams) });
+      sendJson(response, 200, listTickets(url.searchParams));
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/tickets/export') {
       assertRole(auth, 'user');
-      const rows = listTickets(url.searchParams);
-      sendText(response, 200, toCsv(rows), {
+      const exportParams = new URLSearchParams(url.searchParams);
+      exportParams.set('per_page', '99999');
+      const result = listTickets(exportParams);
+      sendText(response, 200, toCsv(result.tickets), {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="tickets-${formatIsoDate(Date.now())}.csv"`
       });
