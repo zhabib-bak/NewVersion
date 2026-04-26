@@ -106,6 +106,7 @@ input, select, textarea {
   border-radius: 14px;
   padding: 12px 13px;
   color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
 }
 
 /* Improve native select readability on Windows/light dropdown surfaces */
@@ -181,7 +182,7 @@ button.ghost {
 
 .entry-layout {
   display: grid;
-  grid-template-columns: 1.2fr 1fr;
+  grid-template-columns: repeat(2, minmax(280px, 1fr));
   gap: 16px;
 }
 
@@ -202,15 +203,16 @@ button.ghost {
 
 .filter-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
   margin-top: 16px;
 }
 
-.filter-actions { display: flex; align-items: end; gap: 8px; }
+.filter-actions { display: flex; align-items: end; gap: 8px; align-self: end; }
 
 .filter-actions button {
   white-space: nowrap;
+  min-width: 72px;
 }
 
 .saved-views { margin-top: 16px; }
@@ -257,8 +259,8 @@ button.ghost {
   cursor: grab;
 }
 
-.summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
-.summary-card { padding: 20px; }
+.summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; }
+.summary-card { padding: 20px; max-width: 320px; }
 .summary-label { display: block; color: var(--muted); margin-bottom: 8px; }
 .summary-value { font-size: 1.8rem; font-family: "Space Grotesk", sans-serif; }
 
@@ -297,7 +299,7 @@ button.ghost {
 .h-fill { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #5ca9ff, #32b48d); }
 
 .table-wrapper { overflow: auto; margin-top: 12px; }
-table { width: 100%; border-collapse: collapse; min-width: 1180px; }
+table { width: 100%; border-collapse: collapse; min-width: 1060px; }
 th, td { padding: 14px 10px; text-align: left; border-bottom: 1px solid rgba(153, 173, 197, 0.1); vertical-align: top; }
 th { color: var(--muted); font-size: 0.82rem; }
 
@@ -317,8 +319,8 @@ th { color: var(--muted); font-size: 0.82rem; }
 .message { padding: 10px 14px; border-radius: 14px; background: rgba(78, 212, 168, 0.14); color: var(--success); }
 .message.error { background: rgba(255, 107, 95, 0.14); color: var(--danger); }
 
-.roles-layout { display: grid; grid-template-columns: 340px 1fr; gap: 16px; }
-.users-list { display: grid; gap: 12px; }
+.roles-layout { display: grid; grid-template-columns: minmax(280px, 340px) 1fr; gap: 16px; }
+.users-list { display: grid; gap: 12px; max-height: 480px; overflow-y: auto; }
 .user-card {
   display: flex;
   justify-content: space-between;
@@ -335,7 +337,7 @@ th { color: var(--muted); font-size: 0.82rem; }
 
 .webhook-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
   margin-bottom: 14px;
 }
@@ -356,6 +358,7 @@ th { color: var(--muted); font-size: 0.82rem; }
 .audit-item pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-all;
   margin: 8px 0 0;
   font-size: 0.8rem;
   color: #cfd9e8;
@@ -377,7 +380,7 @@ th { color: var(--muted); font-size: 0.82rem; }
   background: linear-gradient(180deg, rgba(11, 18, 28, 0.98), rgba(13, 22, 33, 0.98));
 }
 
-.detail-layout { display: grid; grid-template-columns: 1.08fr 1fr; gap: 18px; }
+.detail-layout { display: grid; grid-template-columns: 1.08fr 1fr; gap: 18px; align-items: start; }
 .detail-summary, .detail-activity, .comment-composer, .activity-feed, .meta-card, .comment-item, .manager-panel {
   display: grid; gap: 12px;
 }
@@ -593,6 +596,10 @@ tr.import-row-error td:first-child { border-left: 3px solid var(--danger); }
 }
 .attachment-upload { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
+@media (max-width: 1500px) {
+  .kanban-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 @media (max-width: 1400px) {
   .filter-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .webhook-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -602,6 +609,7 @@ tr.import-row-error td:first-child { border-left: 3px solid var(--danger); }
   .roles-layout, .detail-layout, .summary-grid, .charts-grid { grid-template-columns: 1fr; }
   .kanban-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .entry-layout { grid-template-columns: 1fr; }
+  .chart-panel { min-height: 220px; }
 }
 
 @media (max-width: 1180px) {
