@@ -1411,7 +1411,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/api/import-history') {
       assertRole(auth, 'manager');
-      const batches = db.prepare('SELECT id, imported_by, row_count, filename, rolled_back, rolled_back_at, created_at FROM import_batches ORDER BY id DESC LIMIT 100').all();
+      const batches = db.prepare('SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, rolled_back, rolled_back_at, created_at FROM import_batches ORDER BY id DESC LIMIT 100').all();
       sendJson(response, 200, { batches });
       return;
     }
