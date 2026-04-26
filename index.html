@@ -156,7 +156,7 @@
               <label>Manager<select name="manager" id="filter-manager"></select></label>
               <label>Date from<input name="date_from" id="filter-date-from" type="date" /></label>
               <label>Date to<input name="date_to" id="filter-date-to" type="date" /></label>
-              <div class="filter-actions">
+              <div class="filter-actions" style="grid-column: span 2">
                 <button type="button" id="clear-filters" class="ghost">Clear</button>
                 <button type="button" id="save-view" class="ghost">Save view</button>
               </div>
@@ -169,11 +169,11 @@
 
             <div class="board-head">
               <p class="eyebrow">Kanban Board</p>
-              <p class="muted">Drag and drop cards between statuses to apply workflow transitions.</p>
+              <p class="muted">Drag cards between columns to transition status. Click any card to open its detail panel.</p>
             </div>
             <div id="kanban-board" class="kanban-board"></div>
 
-            <div class="table-wrapper">
+            <div class="table-wrapper" style="border-radius: 14px; border: 1px solid rgba(153,173,197,0.1); overflow: hidden">
               <table>
                 <thead>
                   <tr>
@@ -199,7 +199,7 @@
         </section>
 
         <section id="tab-dashboards" class="tab-panel">
-          <section id="summary-cards" class="summary-grid"></section>
+          <section id="summary-cards" class="summary-grid" style="margin-bottom: 0"></section>
           <section class="charts-grid">
             <article class="panel chart-panel">
               <div class="chart-head">
@@ -245,14 +245,14 @@
             <section class="panel">
               <p class="eyebrow">Directory</p>
               <h3>Users with platform access</h3>
-              <div id="users-list" class="users-list"></div>
+              <div id="users-list" class="users-list" style="margin-top:12px"></div>
             </section>
           </div>
 
           <section class="panel">
             <p class="eyebrow">Webhooks</p>
             <h3>External automation integration</h3>
-            <form id="webhook-form" class="webhook-grid">
+            <form id="webhook-form" class="webhook-grid" style="align-items: end">
               <input type="hidden" id="webhook-id" />
               <label>Name<input id="webhook-name" required /></label>
               <label>URL<input id="webhook-url" required placeholder="https://example.com/hook" /></label>
@@ -273,7 +273,7 @@
           <section class="panel">
             <p class="eyebrow">Audit Trail</p>
             <h3>Immutable security and change log</h3>
-            <div id="audit-list" class="audit-list"></div>
+            <div id="audit-list" class="audit-list" style="margin-top:12px"></div>
           </section>
         </section>
       </main>
