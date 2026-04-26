@@ -1,11 +1,13 @@
 import { createServer } from 'node:http';
-import { stat, copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { stat, copyFile, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { URL } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
+import { createConnection } from 'node:net';
+import { connect as tlsConnect } from 'node:tls';
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT = process.cwd();
@@ -22,6 +24,15 @@ const WEBHOOK_ALLOWLIST = (process.env.WEBHOOK_ALLOWLIST || '')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 const MAX_BODY_BYTES = 1024 * 1024;
+const MAX_BULK_BODY_BYTES = 5 * 1024 * 1024;
+const MAX_ATTACHMENT_BODY_BYTES = Math.ceil(8 * 1024 * 1024 * 4 / 3) + 4096;
+const SMTP_HOST = process.env.SMTP_HOST || '';
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const SMTP_FROM = process.env.SMTP_FROM || 'Ticket Tracker <no-reply@localhost>';
+const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
+const SMTP_REJECT_UNAUTHORIZED = process.env.SMTP_REJECT_UNAUTHORIZED !== 'false';
 
 const CATEGORIES = [
   'administrative', 'change request', 'CR', 'Inbound', 'Outbound', 'Inventory', 'WMS', 'UCS', 'Scada', 'Skyfall', 'PIN', 'Toting', 'Shuttle'
@@ -29,6 +40,9 @@ const CATEGORIES = [
 const PRIORITIES = ['P1 high', 'P2 medium', 'P3 low'];
 const STATUSES = ['Open', 'In Progress', 'Blocked', 'Closed'];
 const COMMENT_TYPES = ['Update', 'Investigation', 'Blocker', 'Resolution', 'System'];
+const ALLOWED_ATTACHMENT_TYPES = ['image/jpeg','image/png','image/gif','image/webp','application/pdf','text/plain','text/csv'];
+const RE_ATTACHMENT_PATH = /^\/api\/tickets\/\d+\/attachments$/;
+const RE_ATTACHMENT_ITEM_PATH = /^\/api\/tickets\/\d+\/attachments\/\d+$/;
 const ROLE_ORDER = { user: 1, manager: 2, admin: 3 };
 const USER_ROLES = Object.keys(ROLE_ORDER);
 const DEFAULT_PASSWORD_MIN_LENGTH = 10;
@@ -74,6 +88,7 @@ const RATE_LIMITS = {
 
 mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(BACKUP_DIR, { recursive: true });
+mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
 await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
@@ -176,6 +191,31 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (webhook_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS import_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_name TEXT,
+    imported_by TEXT NOT NULL,
+    file_name TEXT,
+    row_count INTEGER NOT NULL DEFAULT 0,
+    created_count INTEGER NOT NULL DEFAULT 0,
+    error_count INTEGER NOT NULL DEFAULT 0,
+    rolled_back INTEGER NOT NULL DEFAULT 0,
+    rolled_back_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS ticket_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER NOT NULL,
+    filename TEXT NOT NULL,
+    mimetype TEXT NOT NULL,
+    size_bytes INTEGER NOT NULL,
+    storage_path TEXT NOT NULL,
+    uploaded_by TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+  );
 `);
 
 ensureColumn('tickets', 'due_date', 'TEXT');
@@ -185,8 +225,10 @@ ensureColumn('user_accounts', 'auth_secret_hash', 'TEXT');
 ensureColumn('user_accounts', 'password_reset_required', 'INTEGER NOT NULL DEFAULT 1');
 ensureColumn('user_accounts', 'failed_login_attempts', 'INTEGER NOT NULL DEFAULT 0');
 ensureColumn('user_accounts', 'locked_until', 'TEXT');
+ensureColumn('user_accounts', 'email', 'TEXT');
 ensureColumn('ticket_comments', 'comment_type', "TEXT NOT NULL DEFAULT 'Update'");
 ensureColumn('webhook_subscriptions', 'secret_encrypted', 'TEXT');
+ensureColumn('tickets', 'batch_id', 'INTEGER');
 
 const secretColumnInfo = db.prepare('PRAGMA table_info(webhook_subscriptions)').all();
 const hasLegacySecret = secretColumnInfo.some((column) => column.name === 'secret');
@@ -208,12 +250,12 @@ const stmtUsers = {
   byId: db.prepare('SELECT * FROM user_accounts WHERE id = ?'),
   insert: db.prepare(`
     INSERT OR IGNORE INTO user_accounts (
-      name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 0, NULL, CURRENT_TIMESTAMP)
+      name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)
   `),
   update: db.prepare(`
     UPDATE user_accounts
-    SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, updated_at = CURRENT_TIMESTAMP
+    SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, email = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `),
   setSecret: db.prepare(`
@@ -333,6 +375,29 @@ const stmtAudit = {
   `)
 };
 
+const stmtImport = {
+  insertBatch: db.prepare(`
+    INSERT INTO import_batches (batch_name, imported_by, file_name, row_count, created_count, error_count)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  updateBatch: db.prepare('UPDATE import_batches SET created_count = ?, error_count = ? WHERE id = ?'),
+  listBatches: db.prepare(`
+    SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, created_at
+    FROM import_batches ORDER BY id DESC LIMIT 50
+  `),
+  batchById: db.prepare('SELECT * FROM import_batches WHERE id = ?'),
+  deleteBatchTickets: db.prepare('DELETE FROM tickets WHERE batch_id = ?'),
+  deleteBatch: db.prepare('DELETE FROM import_batches WHERE id = ?'),
+  countByBatch: db.prepare('SELECT COUNT(*) AS count FROM tickets WHERE batch_id = ?')
+};
+
+const stmtAttachments = {
+  listByTicket: db.prepare('SELECT id, ticket_id, filename, mimetype, size_bytes, uploaded_by, created_at FROM ticket_attachments WHERE ticket_id = ? ORDER BY id ASC'),
+  insert: db.prepare('INSERT INTO ticket_attachments (ticket_id, filename, mimetype, size_bytes, storage_path, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)'),
+  byId: db.prepare('SELECT * FROM ticket_attachments WHERE id = ? AND ticket_id = ?'),
+  delete: db.prepare('DELETE FROM ticket_attachments WHERE id = ? AND ticket_id = ?')
+};
+
 seedUsers();
 seedTicketsAndComments();
 createBackupSnapshot().catch((error) => console.error('[backup]', error));
@@ -352,6 +417,7 @@ function ensurePerformanceIndexes() {
     CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee);
     CREATE INDEX IF NOT EXISTS idx_tickets_manager ON tickets(manager);
     CREATE INDEX IF NOT EXISTS idx_tickets_date_opening ON tickets(date_opening);
+    CREATE INDEX IF NOT EXISTS idx_tickets_batch_id ON tickets(batch_id);
     CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id);
     CREATE INDEX IF NOT EXISTS idx_saved_filters_user_id ON saved_filters(user_id);
   `);
@@ -421,7 +487,7 @@ function decryptSecret(payload) {
 
 function seedUsers() {
   for (const user of SEED_USERS) {
-    stmtUsers.insert.run(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), 1);
+    stmtUsers.insert.run(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), 1, '');
   }
   const rows = db.prepare('SELECT id, auth_secret_hash FROM user_accounts').all();
   for (const row of rows) {
@@ -506,12 +572,12 @@ function sendText(response, statusCode, message, headers = {}) {
   response.end(message);
 }
 
-async function readRequestBody(request) {
+async function readRequestBody(request, limit = MAX_BODY_BYTES) {
   const chunks = [];
   let total = 0;
   for await (const chunk of request) {
     total += chunk.length;
-    if (total > MAX_BODY_BYTES) throw new HttpError(413, 'Request body too large.');
+    if (total > limit) throw new HttpError(413, 'Request body too large.');
     chunks.push(chunk);
   }
   if (chunks.length === 0) return {};
@@ -691,6 +757,7 @@ function normalizeUserInput(input, currentName = null) {
   const role = String(input.role || '').trim();
   const active = Number(input.active ? 1 : 0);
   const password = String(input.password || '').trim();
+  const email = String(input.email || '').trim();
   if (!name) throw new HttpError(400, 'User name is required.');
   if (!USER_ROLES.includes(role)) throw new HttpError(400, 'Invalid role.');
   const existing = stmtUsers.byName.get(name);
@@ -702,7 +769,7 @@ function normalizeUserInput(input, currentName = null) {
     secretHash = hashPassword(password);
     passwordResetRequired = Number(Boolean(input.password_reset_required));
   }
-  return { name, role, active, secretHash, passwordResetRequired };
+  return { name, role, active, secretHash, passwordResetRequired, email };
 }
 
 function normalizeWebhookInput(input) {
@@ -745,18 +812,22 @@ function getComments(ticketId) {
   return stmtComments.listByTicket.all(ticketId);
 }
 
-function hydrateTicket(row) {
+function hydrateTicket(row, { withAttachments = true } = {}) {
   const ticket = mapTicketRow(row);
   const comments = getComments(row.id);
   return {
     ...ticket,
     comments,
     comment_count: comments.length,
-    last_comment_preview: comments.length ? comments.at(-1).body : ''
+    last_comment_preview: comments.length ? comments.at(-1).body : '',
+    ...(withAttachments ? { attachments: stmtAttachments.listByTicket.all(row.id) } : {})
   };
 }
 
-function listTickets(searchParams) {
+function listTickets(searchParams, { paginate = true } = {}) {
+  const page = Math.max(1, Number(searchParams.get('page') || 1));
+  const perPage = Math.min(200, Math.max(10, Number(searchParams.get('per_page') || 50)));
+
   const filters = [];
   const values = [];
   const q = (searchParams.get('q') || '').trim();
@@ -804,7 +875,7 @@ function listTickets(searchParams) {
   }
 
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  let rows = stmtTickets.listBase(where).all(...values).map((row) => hydrateTicket(row));
+  let rows = stmtTickets.listBase(where).all(...values).map((row) => hydrateTicket(row, { withAttachments: false }));
 
   const slaOnly = (searchParams.get('sla_breached') || '').trim();
   if (slaOnly === 'true') rows = rows.filter((ticket) => ticket.is_sla_breached);
@@ -816,7 +887,12 @@ function listTickets(searchParams) {
   if (agingMin !== null && Number.isFinite(agingMin)) rows = rows.filter((ticket) => ticket.aging >= agingMin);
   if (agingMax !== null && Number.isFinite(agingMax)) rows = rows.filter((ticket) => ticket.aging <= agingMax);
 
-  return rows;
+  const total = rows.length;
+  if (!paginate) return { tickets: rows, total, page: 1, perPage: total, totalPages: 1 };
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  const safePage = Math.min(page, totalPages);
+  const tickets = rows.slice((safePage - 1) * perPage, safePage * perPage);
+  return { tickets, total, page: safePage, perPage, totalPages };
 }
 
 function aggregateByPeriod(rows, field, mode) {
@@ -982,6 +1058,101 @@ async function emitWebhooks(eventName, payload) {
     }
     stmtWebhooks.logDelivery.run(hook.id, eventName, responseStatus, success, Date.now() - startedAt, requestId, errorMessage);
   }
+}
+
+async function sendEmail(to, subject, body) {
+  if (!SMTP_HOST || !to) return;
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('SMTP timeout')), 15000);
+    const lines = [];
+    let socket;
+    let tlsSocket;
+    let step = 0;
+
+    const send = (line) => {
+      const s = tlsSocket || socket;
+      if (s) s.write(line + '\r\n');
+    };
+
+    const message = [
+      `From: ${SMTP_FROM}`,
+      `To: ${to}`,
+      `Subject: ${subject}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: text/plain; charset=utf-8`,
+      ``,
+      body
+    ].join('\r\n');
+
+    const handleData = (data) => {
+      const response = data.toString();
+      const code = parseInt(response.slice(0, 3), 10);
+      if (SMTP_SECURE) {
+        // Direct TLS flow
+        if (step === 0 && code === 220) { step = 1; send(`EHLO localhost`); }
+        else if (step === 1 && code === 250) { step = 2; send(`AUTH LOGIN`); }
+        else if (step === 2 && code === 334) { step = 3; send(Buffer.from(SMTP_USER).toString('base64')); }
+        else if (step === 3 && code === 334) { step = 4; send(Buffer.from(SMTP_PASS).toString('base64')); }
+        else if (step === 4 && code === 235) { step = 5; send(`MAIL FROM:<${SMTP_FROM.match(/<(.+)>/)?.[1] || SMTP_FROM}>`); }
+        else if (step === 5 && code === 250) { step = 6; send(`RCPT TO:<${to}>`); }
+        else if (step === 6 && code === 250) { step = 7; send(`DATA`); }
+        else if (step === 7 && code === 354) { step = 8; send(message + '\r\n.'); }
+        else if (step === 8 && code === 250) { step = 9; send(`QUIT`); clearTimeout(timeout); resolve(); }
+        else if (code >= 400) { clearTimeout(timeout); reject(new Error(`SMTP error ${code}: ${response.slice(4).trim()}`)); }
+      } else {
+        // STARTTLS flow
+        if (step === 0 && code === 220) { step = 1; send(`EHLO localhost`); }
+        else if (step === 1 && code === 250) { step = 2; send(`STARTTLS`); }
+        else if (step === 2 && code === 220) {
+          step = 3;
+          tlsSocket = tlsConnect({ socket, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED });
+          tlsSocket.on('data', handleData);
+          tlsSocket.on('error', (e) => { clearTimeout(timeout); reject(e); });
+          send(`EHLO localhost`);
+        }
+        else if (step === 3 && code === 250) { step = 4; send(`AUTH LOGIN`); }
+        else if (step === 4 && code === 334) { step = 5; send(Buffer.from(SMTP_USER).toString('base64')); }
+        else if (step === 5 && code === 334) { step = 6; send(Buffer.from(SMTP_PASS).toString('base64')); }
+        else if (step === 6 && code === 235) { step = 7; send(`MAIL FROM:<${SMTP_FROM.match(/<(.+)>/)?.[1] || SMTP_FROM}>`); }
+        else if (step === 7 && code === 250) { step = 8; send(`RCPT TO:<${to}>`); }
+        else if (step === 8 && code === 250) { step = 9; send(`DATA`); }
+        else if (step === 9 && code === 354) { step = 10; send(message + '\r\n.'); }
+        else if (step === 10 && code === 250) { step = 11; send(`QUIT`); clearTimeout(timeout); resolve(); }
+        else if (code >= 400) { clearTimeout(timeout); reject(new Error(`SMTP error ${code}: ${response.slice(4).trim()}`)); }
+      }
+    };
+
+    if (SMTP_SECURE) {
+      tlsSocket = tlsConnect(SMTP_PORT, SMTP_HOST, { rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED });
+      tlsSocket.on('data', handleData);
+      tlsSocket.on('error', (e) => { clearTimeout(timeout); reject(e); });
+    } else {
+      socket = createConnection(SMTP_PORT, SMTP_HOST);
+      socket.on('data', handleData);
+      socket.on('error', (e) => { clearTimeout(timeout); reject(e); });
+    }
+  });
+}
+
+function getUserEmail(name) {
+  const user = stmtUsers.byName.get(name);
+  return user?.email || null;
+}
+
+function buildTicketEmailBody(ticket) {
+  return [
+    `Ticket #${ticket.id} — ${ticket.jd_ticket_number}`,
+    ``,
+    `Description: ${ticket.description}`,
+    `Category:    ${ticket.category}`,
+    `Priority:    ${ticket.priority}`,
+    `Status:      ${ticket.status}`,
+    `Assignee:    ${ticket.assignee}`,
+    `Manager:     ${ticket.manager}`,
+    `Due date:    ${ticket.due_date || 'N/A'}`,
+    ``,
+    `Open in your ticket tracker to view details and add comments.`
+  ].join('\n');
 }
 
 const MIME_TYPES = {
@@ -1168,7 +1339,7 @@ const server = createServer(async (request, response) => {
       const payload = normalizeUserInput(await readRequestBody(request));
       const secretHash = payload.secretHash || hashPassword(DEFAULT_SEED_PASSWORD);
       const passwordResetRequired = payload.secretHash ? payload.passwordResetRequired : 1;
-      const result = stmtUsers.insert.run(payload.name, payload.role, payload.active, secretHash, passwordResetRequired);
+      const result = stmtUsers.insert.run(payload.name, payload.role, payload.active, secretHash, passwordResetRequired, payload.email || '');
       if (result.changes === 0) throw new HttpError(409, 'User already exists.');
       const user = stmtUsers.byId.get(result.lastInsertRowid);
       logAudit('user', user.id, 'create', auth.name, { name: user.name, role: user.role, active: user.active });
@@ -1184,7 +1355,7 @@ const server = createServer(async (request, response) => {
       if (!current) throw new HttpError(404, 'User not found.');
       const payload = normalizeUserInput(await readRequestBody(request), current.name);
       const nextResetRequired = payload.secretHash ? payload.passwordResetRequired : current.password_reset_required;
-      stmtUsers.update.run(payload.name, payload.role, payload.active, payload.secretHash, nextResetRequired, id);
+      stmtUsers.update.run(payload.name, payload.role, payload.active, payload.secretHash, nextResetRequired, payload.email || '', id);
       if (payload.secretHash) stmtSessions.deleteByUser.run(id);
       logAudit('user', id, 'update', auth.name, { before: { name: current.name, role: current.role, active: current.active }, after: { name: payload.name, role: payload.role, active: payload.active, password_reset_required: nextResetRequired } });
       const user = stmtUsers.byId.get(id);
@@ -1241,6 +1412,13 @@ const server = createServer(async (request, response) => {
       const entityId = entityIdValue ? Number(entityIdValue) : null;
       const rows = stmtAudit.list.all(entityType, entityType, entityId, entityId).map((row) => ({ ...row, details_json: JSON.parse(row.details_json) }));
       sendJson(response, 200, { events: rows });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/import-history') {
+      assertRole(auth, 'manager');
+      const batches = db.prepare('SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, rolled_back, rolled_back_at, created_at FROM import_batches ORDER BY id DESC LIMIT 100').all();
+      sendJson(response, 200, { batches });
       return;
     }
 
@@ -1307,17 +1485,113 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/api/tickets') {
       assertRole(auth, 'user');
-      sendJson(response, 200, { tickets: listTickets(url.searchParams) });
+      sendJson(response, 200, listTickets(url.searchParams));
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/tickets/export') {
       assertRole(auth, 'user');
-      const rows = listTickets(url.searchParams);
-      sendText(response, 200, toCsv(rows), {
+      const result = listTickets(url.searchParams, { paginate: false });
+      sendText(response, 200, toCsv(result.tickets), {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="tickets-${formatIsoDate(Date.now())}.csv"`
       });
+      return;
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/tickets/import-template') {
+      assertRole(auth, 'manager');
+      const headers = ['description', 'jd_ticket_number', 'category', 'priority', 'status', 'assignee', 'manager', 'date_opening', 'date_closed', 'updates_comments'];
+      const exampleRow = [
+        'Example issue description',
+        '6914999',
+        CATEGORIES[0],
+        'P2 medium',
+        'Open',
+        getAllowedAssignees()[0] || 'Samuel',
+        getManagers()[0] || 'Adriano',
+        formatIsoDate(Date.now()),
+        '',
+        'Opening context for the ticket.'
+      ];
+      const csv = [headers.join(','), exampleRow.map(csvCell).join(',')].join('\n');
+      sendText(response, 200, csv, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': 'attachment; filename="ticket-import-template.csv"'
+      });
+      return;
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/tickets/bulk') {
+      assertRole(auth, 'manager');
+      const payload = await readRequestBody(request, MAX_BULK_BODY_BYTES);
+      const rows = Array.isArray(payload.tickets) ? payload.tickets : [];
+      if (!rows.length) throw new HttpError(400, 'No tickets provided.');
+      if (rows.length > 500) throw new HttpError(400, 'Maximum 500 tickets per import.');
+      const batchName = String(payload.batch_name || `Import ${formatIsoDate(Date.now())}`).trim().slice(0, 200);
+      const fileName = String(payload.file_name || '').trim().slice(0, 255);
+
+      const batchResult = stmtImport.insertBatch.run(batchName, auth.name, fileName, rows.length, 0, 0);
+      const batchId = batchResult.lastInsertRowid;
+      const createdIds = [];
+      const errors = [];
+
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        try {
+          const preprocessed = { ...row, status: String(row.status || 'Open').trim() || 'Open' };
+          const ticket = normalizeTicketInput(preprocessed);
+          const existing = db.prepare('SELECT id FROM tickets WHERE jd_ticket_number = ?').get(ticket.jd_ticket_number);
+          if (existing) {
+            errors.push({ row: i + 1, jd_ticket_number: ticket.jd_ticket_number, message: `Duplicate: JD ${ticket.jd_ticket_number} already exists.` });
+            continue;
+          }
+          const due = calculateDueDate(ticket.date_opening, ticket.priority);
+          const result = stmtTickets.insert.run(
+            ticket.description, ticket.jd_ticket_number, ticket.category, ticket.updates_comments,
+            ticket.priority, ticket.date_opening, ticket.date_closed, ticket.status,
+            ticket.assignee, ticket.manager, due
+          );
+          const newId = result.lastInsertRowid;
+          if (ticket.updates_comments) stmtComments.insert.run(newId, ticket.assignee, 'Update', ticket.updates_comments);
+          createdIds.push(newId);
+        } catch (error) {
+          errors.push({ row: i + 1, jd_ticket_number: String(row.jd_ticket_number || ''), message: error instanceof HttpError ? error.message : 'Validation error.' });
+        }
+      }
+
+      if (createdIds.length) {
+        const placeholders = createdIds.map(() => '?').join(',');
+        db.prepare(`UPDATE tickets SET batch_id = ? WHERE id IN (${placeholders})`).run(batchId, ...createdIds);
+      }
+      stmtImport.updateBatch.run(createdIds.length, errors.length, batchId);
+      logAudit('import_batch', batchId, 'bulk_import', auth.name, {
+        batch_name: batchName, file_name: fileName, row_count: rows.length,
+        created: createdIds.length, errors: errors.length
+      });
+      for (const id of createdIds) {
+        const row = stmtTickets.byId.get(id);
+        if (row) emitWebhooks('ticket.created', hydrateTicket(row)).catch(() => {});
+      }
+      sendJson(response, 201, { batch_id: batchId, created: createdIds.length, skipped: errors.length, errors, total: rows.length });
+      return;
+    }
+
+    // GET /api/tickets/:id/attachments/:attachmentId — download (must be before the generic GET /api/tickets/:id route)
+    if (request.method === 'GET' && RE_ATTACHMENT_ITEM_PATH.test(url.pathname)) {
+      assertRole(auth, 'user');
+      const parts = url.pathname.split('/');
+      const ticketId = Number(parts[3]);
+      const attachmentId = Number(parts[5]);
+      const attachment = stmtAttachments.byId.get(attachmentId, ticketId);
+      if (!attachment) throw new HttpError(404, 'Attachment not found.');
+      response.writeHead(200, securityHeaders({
+        'Content-Type': attachment.mimetype,
+        'Content-Disposition': `attachment; filename="${attachment.filename}"`,
+        'Content-Length': String(attachment.size_bytes),
+        'Cache-Control': 'private, max-age=3600'
+      }));
+      createReadStream(attachment.storage_path).pipe(response);
       return;
     }
 
@@ -1353,6 +1627,10 @@ const server = createServer(async (request, response) => {
       const ticket = hydrateTicket(row);
       logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
       await emitWebhooks('ticket.created', ticket);
+      const assigneeEmail = getUserEmail(ticket.assignee);
+      if (assigneeEmail) {
+        sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      }
       sendJson(response, 201, { ticket });
       return;
     }
@@ -1392,6 +1670,14 @@ const server = createServer(async (request, response) => {
         after: { status: ticket.status, priority: ticket.priority, assignee: ticket.assignee, manager: ticket.manager }
       });
       await emitWebhooks('ticket.updated', ticket);
+      if (current.assignee !== payload.assignee) {
+        const newAssigneeEmail = getUserEmail(ticket.assignee);
+        if (newAssigneeEmail) sendEmail(newAssigneeEmail, `[Assigned to you #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      }
+      if (current.status !== payload.status) {
+        const managerEmail = getUserEmail(ticket.manager);
+        if (managerEmail) sendEmail(managerEmail, `[Status changed #${ticket.id}] ${current.status} → ${ticket.status}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      }
       sendJson(response, 200, { ticket });
       return;
     }
@@ -1422,6 +1708,58 @@ const server = createServer(async (request, response) => {
       logAudit('ticket_comment', id, 'create', auth.name, { comment_id: comment.id, author: comment.author, comment_type: comment.comment_type });
       await emitWebhooks('ticket.comment.created', comment);
       sendJson(response, 201, { comment });
+      return;
+    }
+
+    if (request.method === 'DELETE' && url.pathname.match(/^\/api\/import-history\/\d+$/)) {
+      assertRole(auth, 'admin');
+      const id = Number(url.pathname.split('/').pop());
+      if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid batch id.');
+      const batch = stmtImport.batchById.get(id);
+      if (!batch) throw new HttpError(404, 'Import batch not found.');
+      const { count } = stmtImport.countByBatch.get(id);
+      stmtImport.deleteBatchTickets.run(id);
+      stmtImport.deleteBatch.run(id);
+      logAudit('import_batch', id, 'rollback', auth.name, { batch_name: batch.batch_name, tickets_deleted: count });
+      sendJson(response, 200, { success: true, tickets_deleted: count });
+      return;
+    }
+
+    // POST /api/tickets/:id/attachments — upload (base64 JSON body)
+    if (request.method === 'POST' && RE_ATTACHMENT_PATH.test(url.pathname)) {
+      assertRole(auth, 'user');
+      const ticketId = Number(url.pathname.split('/')[3]);
+      const exists = stmtTickets.byId.get(ticketId);
+      if (!exists) throw new HttpError(404, 'Ticket not found.');
+      const payload = await readRequestBody(request, MAX_ATTACHMENT_BODY_BYTES);
+      const filename = String(payload.filename || '').trim().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
+      const mimetype = String(payload.mimetype || '').trim();
+      const data = String(payload.data || '');
+      if (!filename) throw new HttpError(400, 'Filename is required.');
+      if (!ALLOWED_ATTACHMENT_TYPES.includes(mimetype)) throw new HttpError(400, `File type not allowed: ${mimetype}`);
+      const buffer = Buffer.from(data, 'base64');
+      if (buffer.length > 8 * 1024 * 1024) throw new HttpError(400, 'File too large (max 8 MB).');
+      const storageName = `${randomUUID()}-${filename}`;
+      const storagePath = join(DATA_DIR, 'uploads', storageName);
+      await writeFile(storagePath, buffer);
+      const result = stmtAttachments.insert.run(ticketId, filename, mimetype, buffer.length, storagePath, auth.name);
+      logAudit('ticket_attachment', ticketId, 'upload', auth.name, { filename, mimetype, size_bytes: buffer.length });
+      sendJson(response, 201, { id: result.lastInsertRowid, ticket_id: ticketId, filename, mimetype, size_bytes: buffer.length, uploaded_by: auth.name });
+      return;
+    }
+
+    // DELETE /api/tickets/:id/attachments/:attachmentId
+    if (request.method === 'DELETE' && RE_ATTACHMENT_ITEM_PATH.test(url.pathname)) {
+      assertRole(auth, 'manager');
+      const parts = url.pathname.split('/');
+      const ticketId = Number(parts[3]);
+      const attachmentId = Number(parts[5]);
+      const attachment = stmtAttachments.byId.get(attachmentId, ticketId);
+      if (!attachment) throw new HttpError(404, 'Attachment not found.');
+      await unlink(attachment.storage_path).catch((e) => { if (e.code !== 'ENOENT') console.error('[attachment:delete]', e.message); });
+      stmtAttachments.delete.run(attachmentId, ticketId);
+      logAudit('ticket_attachment', ticketId, 'delete', auth.name, { filename: attachment.filename });
+      sendJson(response, 200, { success: true });
       return;
     }
 

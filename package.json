@@ -1,10 +1,15 @@
 {
   "name": "ticket-control-board",
   "version": "2.0.0",
+  "description": "Self-hosted operational ticket tracker — Node 22, zero npm deps, SQLite",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "scripts": {
     "start": "node server.mjs",
+    "test": "node scripts/smoke-test.mjs",
     "smoke": "node scripts/smoke-test.mjs"
   }
 }
