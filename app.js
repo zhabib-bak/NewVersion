@@ -403,6 +403,7 @@ async function refreshTickets() {
     params.set("per_page", "50");
     const data = await apiFetch(`/api/tickets?${params.toString()}`);
     state.tickets = data.tickets;
+    state.currentPage = data.page;
     state.totalPages = data.totalPages;
     state.totalTickets = data.total;
     renderTickets();
@@ -973,7 +974,6 @@ async function deleteUser(id) {
 function resetUserForm() {
   elements.userForm.reset();
   elements.userId.value = "";
-  elements.userEmail.value = '';
   elements.userSubmit.textContent = "Save user";
   elements.userActive.checked = true;
   elements.userPasswordResetRequired.checked = true;

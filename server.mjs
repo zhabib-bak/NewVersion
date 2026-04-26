@@ -25,12 +25,14 @@ const WEBHOOK_ALLOWLIST = (process.env.WEBHOOK_ALLOWLIST || '')
   .filter(Boolean);
 const MAX_BODY_BYTES = 1024 * 1024;
 const MAX_BULK_BODY_BYTES = 5 * 1024 * 1024;
+const MAX_ATTACHMENT_BODY_BYTES = Math.ceil(8 * 1024 * 1024 * 4 / 3) + 4096;
 const SMTP_HOST = process.env.SMTP_HOST || '';
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
 const SMTP_FROM = process.env.SMTP_FROM || 'Ticket Tracker <no-reply@localhost>';
 const SMTP_SECURE = process.env.SMTP_SECURE === 'true';
+const SMTP_REJECT_UNAUTHORIZED = process.env.SMTP_REJECT_UNAUTHORIZED !== 'false';
 
 const CATEGORIES = [
   'administrative', 'change request', 'CR', 'Inbound', 'Outbound', 'Inventory', 'WMS', 'UCS', 'Scada', 'Skyfall', 'PIN', 'Toting', 'Shuttle'
@@ -38,6 +40,9 @@ const CATEGORIES = [
 const PRIORITIES = ['P1 high', 'P2 medium', 'P3 low'];
 const STATUSES = ['Open', 'In Progress', 'Blocked', 'Closed'];
 const COMMENT_TYPES = ['Update', 'Investigation', 'Blocker', 'Resolution', 'System'];
+const ALLOWED_ATTACHMENT_TYPES = ['image/jpeg','image/png','image/gif','image/webp','application/pdf','text/plain','text/csv'];
+const RE_ATTACHMENT_PATH = /^\/api\/tickets\/\d+\/attachments$/;
+const RE_ATTACHMENT_ITEM_PATH = /^\/api\/tickets\/\d+\/attachments\/\d+$/;
 const ROLE_ORDER = { user: 1, manager: 2, admin: 3 };
 const USER_ROLES = Object.keys(ROLE_ORDER);
 const DEFAULT_PASSWORD_MIN_LENGTH = 10;
@@ -807,7 +812,7 @@ function getComments(ticketId) {
   return stmtComments.listByTicket.all(ticketId);
 }
 
-function hydrateTicket(row) {
+function hydrateTicket(row, { withAttachments = true } = {}) {
   const ticket = mapTicketRow(row);
   const comments = getComments(row.id);
   return {
@@ -815,11 +820,11 @@ function hydrateTicket(row) {
     comments,
     comment_count: comments.length,
     last_comment_preview: comments.length ? comments.at(-1).body : '',
-    attachments: stmtAttachments.listByTicket.all(row.id)
+    ...(withAttachments ? { attachments: stmtAttachments.listByTicket.all(row.id) } : {})
   };
 }
 
-function listTickets(searchParams) {
+function listTickets(searchParams, { paginate = true } = {}) {
   const page = Math.max(1, Number(searchParams.get('page') || 1));
   const perPage = Math.min(200, Math.max(10, Number(searchParams.get('per_page') || 50)));
 
@@ -870,7 +875,7 @@ function listTickets(searchParams) {
   }
 
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  let rows = stmtTickets.listBase(where).all(...values).map((row) => hydrateTicket(row));
+  let rows = stmtTickets.listBase(where).all(...values).map((row) => hydrateTicket(row, { withAttachments: false }));
 
   const slaOnly = (searchParams.get('sla_breached') || '').trim();
   if (slaOnly === 'true') rows = rows.filter((ticket) => ticket.is_sla_breached);
@@ -883,6 +888,7 @@ function listTickets(searchParams) {
   if (agingMax !== null && Number.isFinite(agingMax)) rows = rows.filter((ticket) => ticket.aging <= agingMax);
 
   const total = rows.length;
+  if (!paginate) return { tickets: rows, total, page: 1, perPage: total, totalPages: 1 };
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const safePage = Math.min(page, totalPages);
   const tickets = rows.slice((safePage - 1) * perPage, safePage * perPage);
@@ -1099,7 +1105,7 @@ async function sendEmail(to, subject, body) {
         else if (step === 1 && code === 250) { step = 2; send(`STARTTLS`); }
         else if (step === 2 && code === 220) {
           step = 3;
-          tlsSocket = tlsConnect({ socket, servername: SMTP_HOST, rejectUnauthorized: false });
+          tlsSocket = tlsConnect({ socket, servername: SMTP_HOST, rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED });
           tlsSocket.on('data', handleData);
           tlsSocket.on('error', (e) => { clearTimeout(timeout); reject(e); });
           send(`EHLO localhost`);
@@ -1117,7 +1123,7 @@ async function sendEmail(to, subject, body) {
     };
 
     if (SMTP_SECURE) {
-      tlsSocket = tlsConnect(SMTP_PORT, SMTP_HOST, { rejectUnauthorized: false });
+      tlsSocket = tlsConnect(SMTP_PORT, SMTP_HOST, { rejectUnauthorized: SMTP_REJECT_UNAUTHORIZED });
       tlsSocket.on('data', handleData);
       tlsSocket.on('error', (e) => { clearTimeout(timeout); reject(e); });
     } else {
@@ -1485,9 +1491,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/api/tickets/export') {
       assertRole(auth, 'user');
-      const exportParams = new URLSearchParams(url.searchParams);
-      exportParams.set('per_page', '99999');
-      const result = listTickets(exportParams);
+      const result = listTickets(url.searchParams, { paginate: false });
       sendText(response, 200, toCsv(result.tickets), {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="tickets-${formatIsoDate(Date.now())}.csv"`
@@ -1574,7 +1578,7 @@ const server = createServer(async (request, response) => {
     }
 
     // GET /api/tickets/:id/attachments/:attachmentId — download (must be before the generic GET /api/tickets/:id route)
-    if (request.method === 'GET' && url.pathname.match(/^\/api\/tickets\/\d+\/attachments\/\d+$/)) {
+    if (request.method === 'GET' && RE_ATTACHMENT_ITEM_PATH.test(url.pathname)) {
       assertRole(auth, 'user');
       const parts = url.pathname.split('/');
       const ticketId = Number(parts[3]);
@@ -1707,12 +1711,6 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && url.pathname === '/api/import-history') {
-      assertRole(auth, 'manager');
-      sendJson(response, 200, { batches: stmtImport.listBatches.all() });
-      return;
-    }
-
     if (request.method === 'DELETE' && url.pathname.match(/^\/api\/import-history\/\d+$/)) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
@@ -1728,18 +1726,17 @@ const server = createServer(async (request, response) => {
     }
 
     // POST /api/tickets/:id/attachments — upload (base64 JSON body)
-    if (request.method === 'POST' && url.pathname.match(/^\/api\/tickets\/\d+\/attachments$/)) {
+    if (request.method === 'POST' && RE_ATTACHMENT_PATH.test(url.pathname)) {
       assertRole(auth, 'user');
       const ticketId = Number(url.pathname.split('/')[3]);
       const exists = stmtTickets.byId.get(ticketId);
       if (!exists) throw new HttpError(404, 'Ticket not found.');
-      const payload = await readRequestBody(request, MAX_BULK_BODY_BYTES);
+      const payload = await readRequestBody(request, MAX_ATTACHMENT_BODY_BYTES);
       const filename = String(payload.filename || '').trim().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
       const mimetype = String(payload.mimetype || '').trim();
       const data = String(payload.data || '');
-      const ALLOWED_TYPES = ['image/jpeg','image/png','image/gif','image/webp','application/pdf','text/plain','text/csv'];
       if (!filename) throw new HttpError(400, 'Filename is required.');
-      if (!ALLOWED_TYPES.includes(mimetype)) throw new HttpError(400, `File type not allowed: ${mimetype}`);
+      if (!ALLOWED_ATTACHMENT_TYPES.includes(mimetype)) throw new HttpError(400, `File type not allowed: ${mimetype}`);
       const buffer = Buffer.from(data, 'base64');
       if (buffer.length > 8 * 1024 * 1024) throw new HttpError(400, 'File too large (max 8 MB).');
       const storageName = `${randomUUID()}-${filename}`;
@@ -1752,14 +1749,14 @@ const server = createServer(async (request, response) => {
     }
 
     // DELETE /api/tickets/:id/attachments/:attachmentId
-    if (request.method === 'DELETE' && url.pathname.match(/^\/api\/tickets\/\d+\/attachments\/\d+$/)) {
+    if (request.method === 'DELETE' && RE_ATTACHMENT_ITEM_PATH.test(url.pathname)) {
       assertRole(auth, 'manager');
       const parts = url.pathname.split('/');
       const ticketId = Number(parts[3]);
       const attachmentId = Number(parts[5]);
       const attachment = stmtAttachments.byId.get(attachmentId, ticketId);
       if (!attachment) throw new HttpError(404, 'Attachment not found.');
-      await unlink(attachment.storage_path).catch(() => {});
+      await unlink(attachment.storage_path).catch((e) => { if (e.code !== 'ENOENT') console.error('[attachment:delete]', e.message); });
       stmtAttachments.delete.run(attachmentId, ticketId);
       logAudit('ticket_attachment', ticketId, 'delete', auth.name, { filename: attachment.filename });
       sendJson(response, 200, { success: true });

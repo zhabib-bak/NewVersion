@@ -154,7 +154,6 @@ try {
       passed ? '' : `status=${res.status} csrf=${hasCsrf} cookie=${hasCookie}`);
     if (hasCsrf) csrfToken = res.body.csrf_token;
     if (hasCookie) {
-      // Extract just the cookie value part (before first ';')
       cookie = cookieStr.split(';')[0];
     }
   }
@@ -166,7 +165,7 @@ try {
 
   // Check 3: GET /api/tickets → body.tickets is an array
   {
-    const res = await get('/api/tickets', { Cookie: cookie, 'X-CSRF-Token': csrfToken });
+    const res = await get('/api/tickets', authHeaders);
     const passed = res.status === 200 && res.body && Array.isArray(res.body.tickets);
     check('GET /api/tickets → body.tickets is an array', passed,
       passed ? '' : `status=${res.status} body=${JSON.stringify(res.body)}`);
