@@ -704,6 +704,30 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
 .per-page-label { font-size: 0.82rem; color: var(--muted); display: flex; align-items: center; gap: 5px; margin-right: 6px; }
 .per-page-label select { font-size: 0.82rem; padding: 3px 6px; background: var(--panel-bg, #0c141f); border: 1px solid rgba(153,173,197,0.2); border-radius: 6px; color: var(--fg); }
 
+/* Tickets top toolbar */
+.tickets-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: rgba(255,255,255,0.025);
+  border: 1px solid rgba(153,173,197,0.1);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.tickets-toolbar-nav { display: flex; align-items: center; gap: 8px; }
+.non-closed-badge {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(99,179,237,0.12);
+  border: 1px solid rgba(99,179,237,0.25);
+  border-radius: 20px;
+  padding: 4px 12px;
+}
+
 /* Kanban column pagination */
 .kanban-pagination {
   display: flex;

@@ -185,6 +185,7 @@ function bindEvents() {
   elements.webhookForm.addEventListener("submit", saveWebhook);
   elements.webhookReset.addEventListener("click", resetWebhookForm);
   bindImportEvents();
+  bindTicketsToolbar();
   elements.ticketDetail.addEventListener("click", (event) => {
     if (event.target === elements.ticketDetail) closeTicketDetail();
   });
@@ -517,12 +518,56 @@ function updateActiveFiltersBanner() {
   elements.clearFilters.classList.toggle('filter-active', active);
 }
 
+function renderTicketsToolbar() {
+  const { currentPage, totalPages, totalTickets, perPage } = state;
+
+  // Non-closed count from dashboard totals
+  const badge = document.getElementById('non-closed-badge');
+  if (badge && state.dashboard) {
+    const t = state.dashboard.totals;
+    const active = (t.open || 0) + (t.inProgress || 0) + (t.blocked || 0);
+    badge.textContent = `${active} active tickets`;
+    badge.hidden = false;
+  }
+
+  // Per-page selector
+  const sel = document.getElementById('per-page-select-top');
+  if (sel && Number(sel.value) !== perPage) sel.value = String(perPage);
+
+  // Page info + arrows
+  const prevBtn = document.getElementById('page-prev-top');
+  const nextBtn = document.getElementById('page-next-top');
+  const info    = document.getElementById('page-info-top');
+  if (prevBtn && nextBtn && info) {
+    info.textContent = totalTickets === 0 ? '0 tickets' : `${(currentPage - 1) * perPage + 1}–${Math.min(currentPage * perPage, totalTickets)} of ${totalTickets}`;
+    prevBtn.disabled = currentPage <= 1;
+    nextBtn.disabled = currentPage >= totalPages;
+  }
+}
+
+function bindTicketsToolbar() {
+  document.getElementById('per-page-select-top')?.addEventListener('change', (e) => {
+    state.perPage = Number(e.target.value);
+    state.currentPage = 1;
+    refreshTickets();
+  });
+  document.getElementById('page-prev-top')?.addEventListener('click', () => {
+    state.currentPage = Math.max(1, state.currentPage - 1);
+    refreshTickets();
+  });
+  document.getElementById('page-next-top')?.addEventListener('click', () => {
+    state.currentPage = Math.min(state.totalPages, state.currentPage + 1);
+    refreshTickets();
+  });
+}
+
 function renderTickets() {
   const { currentPage, totalTickets, perPage } = state;
   const from = totalTickets === 0 ? 0 : (currentPage - 1) * perPage + 1;
   const to = Math.min(currentPage * perPage, totalTickets);
   elements.ticketCount.textContent = totalTickets === 0 ? "0 tickets" : `Showing ${from}–${to} of ${totalTickets} tickets`;
   updateActiveFiltersBanner();
+  renderTicketsToolbar();
   elements.ticketsTableBody.innerHTML = state.tickets
     .map(
       (ticket) => `
@@ -646,32 +691,26 @@ function renderPagination() {
   const from = totalTickets === 0 ? 0 : (currentPage - 1) * perPage + 1;
   const to = Math.min(currentPage * perPage, totalTickets);
   const countInfo = `<span class="pagination-info">${totalTickets === 0 ? '0 tickets' : `${from}–${to} of ${totalTickets} ticket${totalTickets !== 1 ? 's' : ''}`}</span>`;
-  const perPageSelect = `<label class="per-page-label">Show <select id="per-page-select">${[25, 50, 100].map((n) => `<option value="${n}"${n === perPage ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`;
 
   if (totalPages <= 1) {
-    el.innerHTML = `${perPageSelect} ${countInfo}`;
-  } else {
-    el.innerHTML = `
-      ${perPageSelect}
-      <button type="button" class="ghost small-button" id="page-first" ${currentPage <= 1 ? 'disabled' : ''} title="First page">«</button>
-      <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
-      ${buildPageNumbers(currentPage, totalPages)}
-      <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
-      <button type="button" class="ghost small-button" id="page-last" ${currentPage >= totalPages ? 'disabled' : ''} title="Last page">»</button>
-      ${countInfo}
-    `;
-    document.getElementById('page-first')?.addEventListener('click', () => { state.currentPage = 1; refreshTickets(); });
-    document.getElementById('page-prev')?.addEventListener('click', () => { state.currentPage = Math.max(1, state.currentPage - 1); refreshTickets(); });
-    document.getElementById('page-next')?.addEventListener('click', () => { state.currentPage = Math.min(state.totalPages, state.currentPage + 1); refreshTickets(); });
-    document.getElementById('page-last')?.addEventListener('click', () => { state.currentPage = state.totalPages; refreshTickets(); });
-    document.querySelectorAll('.page-num-btn').forEach((btn) => {
-      btn.addEventListener('click', () => { state.currentPage = Number(btn.dataset.page); refreshTickets(); });
-    });
+    el.innerHTML = countInfo;
+    return;
   }
-  document.getElementById('per-page-select')?.addEventListener('change', (e) => {
-    state.perPage = Number(e.target.value);
-    state.currentPage = 1;
-    refreshTickets();
+
+  el.innerHTML = `
+    <button type="button" class="ghost small-button" id="page-first" ${currentPage <= 1 ? 'disabled' : ''} title="First page">«</button>
+    <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
+    ${buildPageNumbers(currentPage, totalPages)}
+    <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
+    <button type="button" class="ghost small-button" id="page-last" ${currentPage >= totalPages ? 'disabled' : ''} title="Last page">»</button>
+    ${countInfo}
+  `;
+  document.getElementById('page-first')?.addEventListener('click', () => { state.currentPage = 1; refreshTickets(); });
+  document.getElementById('page-prev')?.addEventListener('click', () => { state.currentPage = Math.max(1, state.currentPage - 1); refreshTickets(); });
+  document.getElementById('page-next')?.addEventListener('click', () => { state.currentPage = Math.min(state.totalPages, state.currentPage + 1); refreshTickets(); });
+  document.getElementById('page-last')?.addEventListener('click', () => { state.currentPage = state.totalPages; refreshTickets(); });
+  document.querySelectorAll('.page-num-btn').forEach((btn) => {
+    btn.addEventListener('click', () => { state.currentPage = Number(btn.dataset.page); refreshTickets(); });
   });
 }
 
@@ -704,6 +743,7 @@ async function updateTicketStatus(ticket, targetStatus) {
 
 function renderDashboard() {
   if (!state.dashboard) return;
+  renderTicketsToolbar();
   const t = state.dashboard.totals;
   const pw = state.dashboard.prevWeek || {};
   const sl = state.dashboard.sparklines || {};

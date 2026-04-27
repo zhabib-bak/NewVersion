@@ -176,6 +176,22 @@
               <div id="views-list" class="views-list"></div>
             </div>
 
+            <div class="tickets-toolbar">
+              <span id="non-closed-badge" class="non-closed-badge" title="Tickets that are Open, In Progress or Blocked"></span>
+              <div class="tickets-toolbar-nav">
+                <label class="per-page-label">Show
+                  <select id="per-page-select-top">
+                    <option value="25">25</option>
+                    <option value="50" selected>50</option>
+                    <option value="100">100</option>
+                  </select>
+                </label>
+                <button type="button" id="page-prev-top" class="ghost small-button" disabled>‹ Prev</button>
+                <span id="page-info-top" class="pagination-info">—</span>
+                <button type="button" id="page-next-top" class="ghost small-button" disabled>Next ›</button>
+              </div>
+            </div>
+
             <div class="board-head">
               <p class="eyebrow">Kanban Board</p>
               <p class="muted">Drag cards between columns to transition status. Click any card to open its detail panel.</p>
