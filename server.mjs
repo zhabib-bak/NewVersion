@@ -1643,7 +1643,16 @@ const server = createServer(async (request, response) => {
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         try {
-          const preprocessed = { ...row, status: String(row.status || 'Open').trim() || 'Open' };
+          const allAssignees = getAllowedAssignees();
+          const allManagers = getManagers();
+          const preprocessed = {
+            ...row,
+            status:   STATUSES.includes(String(row.status || '').trim())   ? String(row.status).trim()   : 'Open',
+            priority: PRIORITIES.includes(String(row.priority || '').trim()) ? String(row.priority).trim() : 'P3 low',
+            category: CATEGORIES.includes(String(row.category || '').trim()) ? String(row.category).trim() : CATEGORIES[0],
+            assignee: allAssignees.includes(String(row.assignee || '').trim()) ? String(row.assignee).trim() : (allAssignees[0] || ''),
+            manager:  allManagers.includes(String(row.manager || '').trim())  ? String(row.manager).trim()  : (allManagers[0] || ''),
+          };
           const ticket = normalizeTicketInput(preprocessed);
           const existing = db.prepare('SELECT id FROM tickets WHERE jd_ticket_number = ?').get(ticket.jd_ticket_number);
           if (existing) {

@@ -1298,22 +1298,25 @@ function parseCsvToObjects(text) {
 
 function validateImportRow(row, meta) {
   const errors = [];
+  const warnings = [];
+  // Hard errors — block import
   if (!row.description) errors.push("Description is required");
   if (!row.jd_ticket_number) errors.push("JD ticket number is required");
-  if (row.category && !meta.categories.includes(row.category)) errors.push(`Invalid category: "${row.category}"`);
-  if (row.priority && !meta.priorities.includes(row.priority)) errors.push(`Invalid priority: "${row.priority}"`);
-  const status = row.status || "Open";
-  if (!meta.statuses.includes(status)) errors.push(`Invalid status: "${status}"`);
-  if (row.assignee && !meta.users.includes(row.assignee)) errors.push(`Unknown assignee: "${row.assignee}"`);
-  if (row.manager && !meta.managers.includes(row.manager)) errors.push(`Unknown manager: "${row.manager}"`);
-  if (!row.assignee) errors.push("Assignee is required");
-  if (!row.manager) errors.push("Manager is required");
-  if (!row.category) errors.push("Category is required");
-  if (!row.priority) errors.push("Priority is required");
   if (!row.date_opening) errors.push("Date opened is required");
-  else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date_opening)) errors.push(`Date opened unrecognized: "${row.date_opening}" — use DD/MM/YYYY`);
-  if (row.date_closed && !/^\d{4}-\d{2}-\d{2}$/.test(row.date_closed)) errors.push(`Date closed unrecognized: "${row.date_closed}" — use DD/MM/YYYY`);
-  return errors;
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date_opening)) errors.push(`Date format unrecognized: "${row.date_opening}"`);
+  if (row.date_closed && !/^\d{4}-\d{2}-\d{2}$/.test(row.date_closed)) errors.push(`Date closed unrecognized: "${row.date_closed}"`);
+  // Soft warnings — will use defaults, but still importable
+  if (!row.priority) warnings.push("Priority missing → will default to P3 low");
+  else if (!meta.priorities.includes(row.priority)) warnings.push(`Unknown priority "${row.priority}" → will default to P3 low`);
+  if (!row.category) warnings.push("Category missing → will default to first category");
+  else if (!meta.categories.includes(row.category)) warnings.push(`Unknown category "${row.category}" → will default`);
+  if (!row.assignee) warnings.push("Assignee missing → will default to first user");
+  else if (!meta.users.includes(row.assignee)) warnings.push(`Unknown assignee "${row.assignee}" → will default`);
+  if (!row.manager) warnings.push("Manager missing → will default to first manager");
+  else if (!meta.managers.includes(row.manager)) warnings.push(`Unknown manager "${row.manager}" → will default`);
+  const status = row.status || "Open";
+  if (!meta.statuses.includes(status)) warnings.push(`Unknown status "${row.status}" → will default to Open`);
+  return { errors, warnings };
 }
 
 const DATE_FIELDS = new Set(["date_opening", "date_closed", "due_date"]);
@@ -1524,15 +1527,18 @@ function showImportPreview() {
   const validatedRows = mapped.map((row, i) => ({
     index: i + 1,
     row,
-    errors: validateImportRow(row, state.meta)
+    ...validateImportRow(row, state.meta)
   }));
 
-  const validCount = validatedRows.filter((r) => !r.errors.length).length;
-  const errorCount = validatedRows.filter((r) => r.errors.length).length;
+  const cleanCount   = validatedRows.filter((r) => !r.errors.length && !r.warnings.length).length;
+  const warnCount    = validatedRows.filter((r) => !r.errors.length &&  r.warnings.length).length;
+  const errorCount   = validatedRows.filter((r) =>  r.errors.length).length;
+  const importable   = cleanCount + warnCount;
 
   elements.importPreviewSummary.innerHTML = `
-    <span class="import-summary-chip valid">${validCount} valid rows</span>
-    <span class="import-summary-chip error">${errorCount} rows with errors</span>
+    <span class="import-summary-chip valid">${cleanCount} valid</span>
+    ${warnCount ? `<span class="import-summary-chip warning">${warnCount} with warnings</span>` : ""}
+    ${errorCount ? `<span class="import-summary-chip error">${errorCount} blocked</span>` : ""}
     <span class="import-summary-chip neutral">${records.length} total</span>
   `;
 
@@ -1540,28 +1546,34 @@ function showImportPreview() {
   elements.importPreviewHead.innerHTML = `
     <th>#</th><th>Status</th>
     ${previewFields.map((f) => `<th>${IMPORT_FIELDS.find((x) => x.key === f)?.label || f}</th>`).join("")}
-    <th>Errors</th>
+    <th>Notes</th>
   `;
   elements.importPreviewBody.innerHTML = validatedRows.map((item) => {
-    const isValid = !item.errors.length;
-    const statusCell = isValid
-      ? `<span class="badge success">Valid</span>`
-      : `<span class="badge danger">Error</span>`;
-    const errorsCell = item.errors.length
+    const hasErrors   = item.errors.length > 0;
+    const hasWarnings = item.warnings.length > 0;
+    const statusCell  = hasErrors
+      ? `<span class="badge danger">Blocked</span>`
+      : hasWarnings
+        ? `<span class="badge warning">Warnings</span>`
+        : `<span class="badge success">Valid</span>`;
+    const notesCell = hasErrors
       ? `<span style="color:var(--danger);font-size:0.78rem">${escapeHtml(item.errors.join("; "))}</span>`
-      : `<span class="muted">—</span>`;
+      : hasWarnings
+        ? `<span style="color:var(--warning);font-size:0.78rem">${escapeHtml(item.warnings.join("; "))}</span>`
+        : `<span class="muted">—</span>`;
+    const rowClass = hasErrors ? "import-row-error" : hasWarnings ? "import-row-warning" : "import-row-valid";
     return `
-      <tr class="${isValid ? 'import-row-valid' : 'import-row-error'}">
+      <tr class="${rowClass}">
         <td>${item.index}</td>
         <td>${statusCell}</td>
         ${previewFields.map((f) => `<td>${escapeHtml(String(item.row[f] || ""))}</td>`).join("")}
-        <td>${errorsCell}</td>
+        <td>${notesCell}</td>
       </tr>
     `;
   }).join("");
 
-  elements.importConfirm.textContent = `Import ${validCount} valid row${validCount !== 1 ? "s" : ""}`;
-  elements.importConfirm.disabled = validCount === 0;
+  elements.importConfirm.textContent = `Import ${importable} row${importable !== 1 ? "s" : ""}${warnCount ? ` (${warnCount} with defaults)` : ""}`;
+  elements.importConfirm.disabled = importable === 0;
   showImportStep("preview");
   state.importValidatedRows = validatedRows;
 }

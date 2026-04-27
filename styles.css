@@ -571,8 +571,9 @@ th { color: var(--muted); font-size: 0.82rem; }
   font-weight: 600;
 }
 
-.import-summary-chip.valid { background: rgba(78, 212, 168, 0.14); color: var(--success); }
-.import-summary-chip.error { background: rgba(255, 107, 95, 0.14); color: var(--danger); }
+.import-summary-chip.valid   { background: rgba(78, 212, 168, 0.14); color: var(--success); }
+.import-summary-chip.warning { background: rgba(255, 179, 71, 0.14);  color: var(--warning); }
+.import-summary-chip.error   { background: rgba(255, 107, 95, 0.14); color: var(--danger); }
 .import-summary-chip.neutral { background: rgba(108, 141, 183, 0.15); color: #b6caf0; }
 
 .import-preview-wrap {
@@ -583,8 +584,10 @@ th { color: var(--muted); font-size: 0.82rem; }
 
 .import-preview-wrap table { min-width: 900px; }
 
-tr.import-row-valid td:first-child { border-left: 3px solid var(--success); }
-tr.import-row-error td:first-child { border-left: 3px solid var(--danger); }
+tr.import-row-valid   td:first-child { border-left: 3px solid var(--success); }
+tr.import-row-warning td:first-child { border-left: 3px solid var(--warning); }
+tr.import-row-error   td:first-child { border-left: 3px solid var(--danger); }
+tr.import-row-warning { background: rgba(255,179,71,.03); }
 
 .import-result-grid {
   display: grid;
