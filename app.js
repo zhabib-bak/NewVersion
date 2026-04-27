@@ -428,6 +428,8 @@ async function refreshDashboard() {
   try {
     const data = await apiFetch("/api/dashboard");
     state.dashboard = data;
+    const updatedEl = document.getElementById("dashboard-updated");
+    if (updatedEl) updatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     renderDashboard();
   } catch (error) {
     showMessage(error.message, true);
@@ -602,23 +604,25 @@ function renderDashboard() {
   if (!state.dashboard) return;
   const t = state.dashboard.totals;
   const cards = [
-    { label: "Total tickets", value: t.total, color: "neutral" },
-    { label: "Open", value: t.open, color: t.open > 10 ? "warning" : "success" },
-    { label: "In Progress", value: t.inProgress, color: "brand" },
-    { label: "Blocked", value: t.blocked, color: t.blocked > 0 ? "danger" : "success" },
-    { label: "P1 open", value: t.p1Open, color: t.p1Open > 0 ? "danger" : "success" },
-    { label: "Closed", value: t.closed, color: "success" },
-    { label: "Opened this week", value: t.openedThisWeek, color: "neutral" },
-    { label: "Closed this week", value: t.closedThisWeek, color: t.closedThisWeek >= t.openedThisWeek ? "success" : "warning" },
-    { label: "Resolution rate", value: `${t.resolutionRate}%`, color: t.resolutionRate >= 70 ? "success" : t.resolutionRate >= 40 ? "warning" : "danger" },
-    { label: "Avg aging", value: `${t.avgAging}d`, color: t.avgAging > 10 ? "danger" : t.avgAging > 5 ? "warning" : "success" },
-    { label: "Avg lead time", value: `${t.avgLeadTime}d`, color: "neutral" },
-    { label: "SLA breached", value: t.breachedOpen, color: t.breachedOpen > 0 ? "danger" : "success" },
+    { label: "Total tickets",    value: t.total,            color: "neutral", icon: "≡",  status: "All time" },
+    { label: "Open",             value: t.open,             color: t.open > 10 ? "warning" : "success", icon: "○", status: t.open > 10 ? "High volume" : "Under control" },
+    { label: "In Progress",      value: t.inProgress,       color: "brand",   icon: "◑",  status: t.inProgress > 0 ? `${t.inProgress} active` : "None active" },
+    { label: "Blocked",          value: t.blocked,          color: t.blocked > 0 ? "danger" : "success", icon: "⊘", status: t.blocked > 0 ? "Needs attention" : "All clear" },
+    { label: "P1 Open",          value: t.p1Open,           color: t.p1Open > 0 ? "danger" : "success", icon: "▲", status: t.p1Open > 0 ? "Urgent priority" : "None critical" },
+    { label: "Closed",           value: t.closed,           color: "success", icon: "●",  status: `${t.resolutionRate}% resolved` },
+    { label: "Opened this week", value: t.openedThisWeek,   color: "neutral", icon: "↑",  status: "7-day window" },
+    { label: "Closed this week", value: t.closedThisWeek,   color: t.closedThisWeek >= t.openedThisWeek ? "success" : "warning", icon: "↓", status: t.closedThisWeek >= t.openedThisWeek ? "On track" : "Behind pace" },
+    { label: "Resolution rate",  value: `${t.resolutionRate}%`, color: t.resolutionRate >= 70 ? "success" : t.resolutionRate >= 40 ? "warning" : "danger", icon: "%", status: t.resolutionRate >= 70 ? "Excellent" : t.resolutionRate >= 40 ? "Moderate" : "Needs focus" },
+    { label: "Avg aging",        value: `${t.avgAging}d`,   color: t.avgAging > 10 ? "danger" : t.avgAging > 5 ? "warning" : "success", icon: "⌛", status: t.avgAging <= 5 ? "Healthy" : t.avgAging <= 10 ? "Moderate" : "Review needed" },
+    { label: "Avg lead time",    value: `${t.avgLeadTime}d`, color: "neutral", icon: "→", status: "Days to close" },
+    { label: "SLA breached",     value: t.breachedOpen,     color: t.breachedOpen > 0 ? "danger" : "success", icon: "!", status: t.breachedOpen > 0 ? "Immediate action" : "All compliant" },
   ];
   elements.summaryCards.innerHTML = cards.map(card => `
     <article class="summary-card summary-card--${card.color}">
       <span class="summary-label">${escapeHtml(card.label)}</span>
       <strong class="summary-value">${escapeHtml(String(card.value))}</strong>
+      <span class="summary-status">${escapeHtml(card.status)}</span>
+      <span class="summary-icon" aria-hidden="true">${card.icon}</span>
     </article>`).join("");
 
   renderVerticalBarChart(
@@ -656,17 +660,12 @@ function renderVerticalBarChart(container, data, unitLabel) {
   const max = Math.max(...items.map((item) => item.value), 1);
   container.innerHTML = `
     <div class="v-chart">
-      ${items
-        .map(
-          (item) => `
-            <div class="v-bar-group">
-              <span class="v-bar-value">${item.value}</span>
-              <div class="v-bar-track"><div class="v-bar-fill" style="height:${Math.max(12, (item.value / max) * 100)}%"></div></div>
-              <span class="v-bar-label">${escapeHtml(item.label)}</span>
-            </div>
-          `
-        )
-        .join("")}
+      ${items.map(item => `
+        <div class="v-bar-group">
+          <span class="v-bar-value">${item.value || ""}</span>
+          <div class="v-bar-track"><div class="v-bar-fill" style="height:${item.value ? Math.max(6, Math.round((item.value / max) * 100)) : 0}%"></div></div>
+          <span class="v-bar-label">${escapeHtml(item.label)}</span>
+        </div>`).join("")}
     </div>
     <p class="chart-footnote">${unitLabel} per period</p>
   `;
@@ -684,10 +683,11 @@ function renderHorizontalBars(container, data, opts = {}) {
     <div class="h-chart">
       ${items.map(item => {
         const colorClass = colorMap[item.label] || "brand";
+        const pct = item.value ? Math.max(4, Math.round((item.value / max) * 100)) : 0;
         return `
           <div class="h-row">
-            <span class="h-label">${escapeHtml(item.label)}</span>
-            <div class="h-track"><div class="h-fill h-fill--${colorClass}" style="width:${Math.max(item.value ? 8 : 0, (item.value / max) * 100)}%"></div></div>
+            <span class="h-label" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+            <div class="h-track"><div class="h-fill h-fill--${colorClass}" style="width:${pct}%"></div></div>
             <span class="h-value">${item.value}</span>
           </div>`;
       }).join("")}
@@ -703,16 +703,17 @@ function renderWeeklyFlowChart(container, data) {
     <div class="v-chart">
       ${items.map(item => `
         <div class="v-bar-group">
+          <span class="v-bar-value" style="font-size:.62rem;color:var(--muted)">${item.opened}/${item.closed}</span>
           <div class="v-bar-track v-bar-track--dual">
-            <div class="v-bar-fill v-bar-fill--opened" style="height:${Math.max(item.opened ? 8 : 0, (item.opened / max) * 100)}%" title="Opened: ${item.opened}"></div>
-            <div class="v-bar-fill v-bar-fill--closed" style="height:${Math.max(item.closed ? 8 : 0, (item.closed / max) * 100)}%" title="Closed: ${item.closed}"></div>
+            <div class="v-bar-fill v-bar-fill--opened" style="height:${item.opened ? Math.max(4, Math.round((item.opened / max) * 100)) : 0}%" title="Opened: ${item.opened}"></div>
+            <div class="v-bar-fill v-bar-fill--closed" style="height:${item.closed ? Math.max(4, Math.round((item.closed / max) * 100)) : 0}%" title="Closed: ${item.closed}"></div>
           </div>
           <span class="v-bar-label">${escapeHtml(item.label)}</span>
         </div>`).join("")}
     </div>
     <div class="chart-legend">
-      <span class="legend-dot legend-dot--opened"></span><span class="muted">Opened</span>
-      <span class="legend-dot legend-dot--closed"></span><span class="muted">Closed</span>
+      <span><span class="legend-dot legend-dot--opened"></span>Opened</span>
+      <span><span class="legend-dot legend-dot--closed"></span>Closed</span>
     </div>`;
 }
 
