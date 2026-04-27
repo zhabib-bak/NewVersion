@@ -703,6 +703,30 @@ function calculateDueDate(dateOpening, priority) {
   return date.toISOString().slice(0, 10);
 }
 
+function parseToIsoDate(value) {
+  if (!value) return null;
+  const s = String(value).trim();
+  // Already ISO YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // YYYY/MM/DD
+  let m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+  // DD/MM/YYYY or D/M/YYYY (European / display format used by this app)
+  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (m) {
+    const day = Number(m[1]), month = Number(m[2]);
+    // If day <= 12, ambiguous — treat as DD/MM (European) since that's the app's display format
+    // If day > 12, must be DD/MM
+    // If month > 12, must be MM/DD (US)
+    if (month > 12 && day <= 12) {
+      // month and day are swapped — it's M/D/YYYY (US Excel)
+      return `${m[3]}-${m[1].padStart(2,'0')}-${m[2].padStart(2,'0')}`;
+    }
+    return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  }
+  return null;
+}
+
 function formatIsoDate(date) {
   return new Date(date).toISOString().slice(0, 10);
 }
@@ -725,8 +749,8 @@ function normalizeTicketInput(input) {
     category: String(input.category || '').trim(),
     updates_comments: String(input.updates_comments || '').trim(),
     priority: String(input.priority || '').trim(),
-    date_opening: String(input.date_opening || '').trim(),
-    date_closed: String(input.date_closed || '').trim() || null,
+    date_opening: parseToIsoDate(String(input.date_opening || '').trim()) || String(input.date_opening || '').trim(),
+    date_closed: input.date_closed ? (parseToIsoDate(String(input.date_closed).trim()) || String(input.date_closed).trim()) : null,
     status: String(input.status || '').trim(),
     assignee: String(input.assignee || '').trim(),
     manager: String(input.manager || '').trim()
