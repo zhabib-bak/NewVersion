@@ -59,6 +59,7 @@ const elements = {
   agingBucketsChart: document.querySelector("#aging-buckets-chart"),
   statusBreakdownChart: document.querySelector("#status-breakdown-chart"),
   weeklyFlowChart: document.querySelector("#weekly-flow-chart"),
+  atRiskPanel: document.querySelector("#at-risk-panel"),
   summaryTemplate: document.querySelector("#summary-card-template"),
   periodButtons: document.querySelectorAll(".period-button"),
   tabButtons: document.querySelectorAll(".tab-button"),
@@ -498,8 +499,8 @@ function renderTickets() {
           <td>${renderBadge(ticket.status, statusTone(ticket.status))}</td>
           <td>${escapeHtml(ticket.assignee)}</td>
           <td>${escapeHtml(ticket.manager)}</td>
-          <td>${escapeHtml(ticket.date_opening)}</td>
-          <td>${escapeHtml(ticket.due_date || "-")}</td>
+          <td>${escapeHtml(formatDisplayDate(ticket.date_opening))}</td>
+          <td>${escapeHtml(formatDisplayDate(ticket.due_date) || "-")}</td>
           <td>${ticket.aging} days</td>
           <td>${ticket.is_sla_breached ? '<span class="badge danger">Breached</span>' : '<span class="badge success">On time</span>'}</td>
           <td><button type="button" class="small-button" data-open-id="${ticket.id}">Open</button></td>
@@ -604,25 +605,44 @@ async function updateTicketStatus(ticket, targetStatus) {
 function renderDashboard() {
   if (!state.dashboard) return;
   const t = state.dashboard.totals;
+  const pw = state.dashboard.prevWeek || {};
+  const sl = state.dashboard.sparklines || {};
+
+  const weekTrend = (curr, prev) => {
+    if (prev == null) return null;
+    const d = curr - prev;
+    if (d === 0) return '— same as prev week';
+    return d > 0 ? `↑ +${d} vs prev week` : `↓ ${d} vs prev week`;
+  };
+
+  const sparkHtml = (data) => {
+    if (!data || !data.length) return '';
+    const max = Math.max(...data, 1);
+    return `<div class="sparkline" aria-hidden="true">${data.map(v => `<div class="spark-bar" style="height:${Math.max(2, Math.round(v / max * 100))}%"></div>`).join('')}</div>`;
+  };
+
   const cards = [
     { label: "Total tickets",    value: t.total,            color: "neutral", icon: "≡",  status: "All time" },
-    { label: "Open",             value: t.open,             color: t.open > 10 ? "warning" : "success", icon: "○", status: t.open > 10 ? "High volume" : "Under control" },
-    { label: "In Progress",      value: t.inProgress,       color: "brand",   icon: "◑",  status: t.inProgress > 0 ? `${t.inProgress} active` : "None active" },
-    { label: "Blocked",          value: t.blocked,          color: t.blocked > 0 ? "danger" : "success", icon: "⊘", status: t.blocked > 0 ? "Needs attention" : "All clear" },
-    { label: "P1 Open",          value: t.p1Open,           color: t.p1Open > 0 ? "danger" : "success", icon: "▲", status: t.p1Open > 0 ? "Urgent priority" : "None critical" },
-    { label: "Closed",           value: t.closed,           color: "success", icon: "●",  status: `${t.resolutionRate}% resolved` },
-    { label: "Opened this week", value: t.openedThisWeek,   color: "neutral", icon: "↑",  status: "7-day window" },
-    { label: "Closed this week", value: t.closedThisWeek,   color: t.closedThisWeek >= t.openedThisWeek ? "success" : "warning", icon: "↓", status: t.closedThisWeek >= t.openedThisWeek ? "On track" : "Behind pace" },
+    { label: "Open",             value: t.open,             color: t.open > 10 ? "warning" : "success", icon: "○", status: t.open > 10 ? "High volume" : "Under control", filter: "status=Open", spark: sl.opened },
+    { label: "In Progress",      value: t.inProgress,       color: "brand",   icon: "◑",  status: t.inProgress > 0 ? `${t.inProgress} active` : "None active", filter: "status=In Progress" },
+    { label: "Blocked",          value: t.blocked,          color: t.blocked > 0 ? "danger" : "success", icon: "⊘", status: t.blocked > 0 ? "Needs attention" : "All clear", filter: "status=Blocked" },
+    { label: "P1 Open",          value: t.p1Open,           color: t.p1Open > 0 ? "danger" : "success", icon: "▲", status: t.p1Open > 0 ? "Urgent priority" : "None critical", filter: "priority=P1 high" },
+    { label: "Closed",           value: t.closed,           color: "success", icon: "●",  status: `${t.resolutionRate}% resolved`, spark: sl.closed },
+    { label: "Reopen rate",      value: `${t.reopenRate}%`, color: t.reopenRate > 10 ? "warning" : "success", icon: "↺", status: t.reopenRate > 10 ? "Review quality" : "Low reopen rate" },
+    { label: "Opened this week", value: t.openedThisWeek,   color: "neutral", icon: "↑",  status: "7-day window", trend: weekTrend(t.openedThisWeek, pw.openedThisWeek), spark: sl.opened },
+    { label: "Closed this week", value: t.closedThisWeek,   color: t.closedThisWeek >= t.openedThisWeek ? "success" : "warning", icon: "↓", status: t.closedThisWeek >= t.openedThisWeek ? "On track" : "Behind pace", trend: weekTrend(t.closedThisWeek, pw.closedThisWeek), spark: sl.closed },
     { label: "Resolution rate",  value: `${t.resolutionRate}%`, color: t.resolutionRate >= 70 ? "success" : t.resolutionRate >= 40 ? "warning" : "danger", icon: "%", status: t.resolutionRate >= 70 ? "Excellent" : t.resolutionRate >= 40 ? "Moderate" : "Needs focus" },
     { label: "Avg aging",        value: `${t.avgAging}d`,   color: t.avgAging > 10 ? "danger" : t.avgAging > 5 ? "warning" : "success", icon: "⌛", status: t.avgAging <= 5 ? "Healthy" : t.avgAging <= 10 ? "Moderate" : "Review needed" },
-    { label: "Avg lead time",    value: `${t.avgLeadTime}d`, color: "neutral", icon: "→", status: "Days to close" },
     { label: "SLA breached",     value: t.breachedOpen,     color: t.breachedOpen > 0 ? "danger" : "success", icon: "!", status: t.breachedOpen > 0 ? "Immediate action" : "All compliant" },
   ];
+
   elements.summaryCards.innerHTML = cards.map(card => `
-    <article class="summary-card summary-card--${card.color}">
+    <article class="summary-card summary-card--${card.color}${card.filter ? ' summary-card--clickable' : ''}"${card.filter ? ` data-filter="${escapeHtml(card.filter)}"` : ''}>
       <span class="summary-label">${escapeHtml(card.label)}</span>
       <strong class="summary-value">${escapeHtml(String(card.value))}</strong>
       <span class="summary-status">${escapeHtml(card.status)}</span>
+      ${card.trend ? `<span class="summary-trend summary-trend--${card.trend.startsWith('↑') ? 'up' : card.trend.startsWith('↓') ? 'down' : 'flat'}">${escapeHtml(card.trend)}</span>` : ''}
+      ${card.spark ? sparkHtml(card.spark) : ''}
       <span class="summary-icon" aria-hidden="true">${card.icon}</span>
     </article>`).join("");
 
@@ -789,8 +809,8 @@ function renderTicketDetail() {
   elements.detailCategory.textContent = ticket.category;
   elements.detailAssignee.textContent = ticket.assignee;
   elements.detailManager.textContent = ticket.manager;
-  elements.detailDateOpening.textContent = ticket.date_opening;
-  elements.detailDateClosed.textContent = ticket.date_closed || "Still open";
+  elements.detailDateOpening.textContent = formatDisplayDate(ticket.date_opening);
+  elements.detailDateClosed.textContent = ticket.date_closed ? formatDisplayDate(ticket.date_closed) : "Still open";
   elements.detailAging.textContent = `${ticket.aging} days`;
   elements.detailCommentCount.textContent = String(ticket.comments.length);
   elements.detailPriority.className = `badge ${priorityTone(ticket.priority)}`;
@@ -1711,6 +1731,12 @@ function formatCommentDate(value) {
 
 function formatIsoDate(value) {
   return new Date(value).toISOString().slice(0, 10);
+}
+
+function formatDisplayDate(isoDate) {
+  if (!isoDate) return "";
+  const [y, m, d] = isoDate.split("-");
+  return `${d}/${m}/${y}`;
 }
 
 function escapeHtml(value) {
