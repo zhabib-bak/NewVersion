@@ -865,6 +865,163 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
 .legend-dot--opened { background: #5ca9ff; }
 .legend-dot--closed { background: #4ed4a8; }
 
+/* ─── KPI CARDS ROW ──────────────────────────────────────────────────────────── */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+  margin-bottom: 20px;
+}
+.kpi-card {
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow .15s, transform .15s;
+}
+.kpi-card--clickable { cursor: pointer; }
+.kpi-card--clickable:hover { box-shadow: 0 4px 18px rgba(0,0,0,.1); transform: translateY(-2px); }
+.kpi-icon { font-size: 1.25rem; line-height: 1; margin-bottom: 6px; opacity: .65; }
+.kpi-value { font-size: 2.2rem; font-weight: 700; letter-spacing: -.03em; line-height: 1; }
+.kpi-label { font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.kpi-sub { font-size: .75rem; color: var(--muted); margin-top: 4px; }
+.kpi-card--neutral { border-left: 3px solid var(--muted); }
+.kpi-card--success { border-left: 3px solid var(--success); }
+.kpi-card--warning { border-left: 3px solid var(--warning); }
+.kpi-card--danger  { border-left: 3px solid var(--danger); }
+.kpi-card--brand   { border-left: 3px solid var(--brand); }
+
+/* ─── DASHBOARD LAYOUT ROWS ──────────────────────────────────────────────────── */
+.dash-row-wide {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.dash-row-three {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.dash-chart-main { display: flex; flex-direction: column; }
+.dash-status-panel { display: flex; flex-direction: column; }
+
+/* ─── SVG FLOW CHART ─────────────────────────────────────────────────────────── */
+.svg-chart-wrap { flex: 1; min-height: 180px; display: flex; flex-direction: column; }
+.svg-flow { width: 100%; height: 100%; min-height: 150px; overflow: visible; }
+.svg-axis-label { font-size: 10px; fill: var(--muted); font-family: inherit; }
+
+/* ─── NET DELTA BADGE ────────────────────────────────────────────────────────── */
+.net-delta-badge {
+  font-size: .72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.net-delta-badge.success { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
+.net-delta-badge.warning { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+.net-delta-badge.neutral { background: var(--surface-alt); color: var(--muted); }
+
+/* ─── STATUS RING ────────────────────────────────────────────────────────────── */
+.status-ring-wrap { display: flex; flex-direction: column; flex: 1; }
+.ring-layout { display: flex; flex-direction: column; align-items: center; gap: 14px; flex: 1; padding: 8px 0; }
+.svg-ring { width: 140px; height: 140px; flex-shrink: 0; }
+.ring-total-value { font-size: 22px; font-weight: 700; fill: var(--text); font-family: inherit; }
+.ring-total-sub   { font-size: 11px; fill: var(--muted); font-family: inherit; }
+.ring-legend { width: 100%; display: flex; flex-direction: column; gap: 6px; }
+.ring-legend-row { display: flex; align-items: center; gap: 8px; font-size: .8rem; }
+.ring-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+.ring-label { flex: 1; color: var(--text); }
+.ring-count { font-weight: 600; min-width: 24px; text-align: right; }
+.ring-pct { min-width: 32px; text-align: right; font-size: .72rem; }
+
+/* ─── WORKLOAD TABLE ─────────────────────────────────────────────────────────── */
+.workload-table { overflow-x: auto; }
+.wl-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.wl-table thead th {
+  text-align: left;
+  font-size: .7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.wl-table tbody tr:hover { background: var(--surface-alt); }
+.wl-table td { padding: 7px 8px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.wl-name { font-weight: 500; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-num { text-align: center; font-variant-numeric: tabular-nums; font-size: .85rem; }
+.wl-num--danger { color: var(--danger); font-weight: 600; }
+.wl-bar-col { width: 80px; }
+.wl-bar-track { background: var(--border); border-radius: 4px; height: 6px; overflow: hidden; }
+.wl-bar-fill { height: 100%; background: var(--brand); border-radius: 4px; transition: width .4s ease; }
+
+/* ─── ACTIVITY FEED ──────────────────────────────────────────────────────────── */
+.af-item { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.af-item:last-child { border-bottom: none; }
+.af-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--brand); flex-shrink: 0; margin-top: 5px; }
+.af-body { flex: 1; min-width: 0; }
+.af-ticket { font-weight: 600; font-size: .8rem; margin: 0 0 3px; color: var(--muted); }
+.af-desc { font-weight: 500; color: var(--text); }
+.af-comment { font-size: .8rem; color: var(--muted); margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.af-meta { display: flex; align-items: center; gap: 8px; font-size: .75rem; margin: 4px 0 0; }
+
+/* ─── COLLAPSIBLE DASH DETAILS ───────────────────────────────────────────────── */
+.dash-details { margin-bottom: 16px; }
+.dash-details summary {
+  font-size: .82rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 10px 14px;
+  background: var(--surface-alt);
+  border-radius: 8px;
+  list-style: none;
+  border: 1px solid var(--border);
+  user-select: none;
+}
+.dash-details summary::-webkit-details-marker { display: none; }
+.dash-details summary::before { content: '▶ '; font-size: .65rem; display: inline-block; transition: transform .2s; }
+.dash-details[open] summary::before { transform: rotate(90deg); }
+.dash-details .charts-grid { margin-top: 14px; }
+
+/* ─── DATA ENTRY TOOL CARDS ──────────────────────────────────────────────────── */
+.tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+.tool-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  transition: box-shadow .15s;
+}
+.tool-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,.08); }
+.tool-card-icon {
+  font-size: 1.5rem;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-alt);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.tool-card--manager .tool-card-icon { background: color-mix(in srgb, var(--brand) 12%, transparent); }
+.tool-card-body { flex: 1; }
+.tool-card-body strong { font-size: .9rem; display: block; margin-bottom: 3px; }
+.tool-card-body .muted { font-size: .78rem; margin: 0; }
+
 /* ─── END DASHBOARD ENHANCEMENTS ─────────────────────────────────────────────── */
 
 @media (max-width: 1500px) {
@@ -883,6 +1040,9 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
   .entry-layout { grid-template-columns: 1fr; }
   .chart-panel { min-height: 200px; }
   .summary-value { font-size: 2rem; }
+  .kpi-row { grid-template-columns: repeat(3, 1fr); }
+  .dash-row-wide { grid-template-columns: 1fr; }
+  .dash-row-three { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 1180px) {
@@ -898,4 +1058,6 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
   .section-tabs { flex-direction: column; }
   .kanban-board { grid-template-columns: 1fr; }
   .h-row { grid-template-columns: 1fr; }
+  .kpi-row { grid-template-columns: repeat(2, 1fr); }
+  .dash-row-three { grid-template-columns: 1fr; }
 }

@@ -1061,6 +1061,30 @@ function getDashboardData() {
       });
       return { opened, closed: closedArr };
     })(),
+    workload: (() => {
+      return [...new Set(open.map(t => t.assignee))]
+        .map(a => ({
+          assignee:   a,
+          open:       open.filter(t => t.assignee === a && t.status === 'Open').length,
+          inProgress: open.filter(t => t.assignee === a && t.status === 'In Progress').length,
+          blocked:    open.filter(t => t.assignee === a && t.status === 'Blocked').length,
+          total:      open.filter(t => t.assignee === a).length,
+        }))
+        .sort((a, b) => b.total - a.total)
+        .slice(0, 10);
+    })(),
+    recentActivity: (() => {
+      try {
+        return db.prepare(`
+          SELECT tc.id, tc.created_at, tc.author, tc.comment_type, tc.body,
+                 t.jd_ticket_number, t.description, t.status, t.priority, t.id AS ticket_id
+          FROM ticket_comments tc
+          JOIN tickets t ON t.id = tc.ticket_id
+          ORDER BY tc.created_at DESC
+          LIMIT 8
+        `).all();
+      } catch { return []; }
+    })(),
   };
 }
 

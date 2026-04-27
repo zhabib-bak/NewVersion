@@ -47,19 +47,16 @@ const elements = {
   exportCsv: document.querySelector("#export-csv"),
   viewsList: document.querySelector("#views-list"),
   kanbanBoard: document.querySelector("#kanban-board"),
-  summaryCards: document.querySelector("#summary-cards"),
   ticketsTableBody: document.querySelector("#tickets-table-body"),
   ticketCount: document.querySelector("#ticket-count"),
   message: document.querySelector("#message"),
   openedTrendChart: document.querySelector("#opened-trend-chart"),
   closedTrendChart: document.querySelector("#closed-trend-chart"),
   priorityChart: document.querySelector("#priority-chart"),
-  assigneeChart: document.querySelector("#assignee-chart"),
   categoryChart: document.querySelector("#category-chart"),
   managerChart: document.querySelector("#manager-chart"),
   throughputChart: document.querySelector("#throughput-chart"),
   agingBucketsChart: document.querySelector("#aging-buckets-chart"),
-  statusBreakdownChart: document.querySelector("#status-breakdown-chart"),
   weeklyFlowChart: document.querySelector("#weekly-flow-chart"),
   atRiskPanel: document.querySelector("#at-risk-panel"),
   summaryTemplate: document.querySelector("#summary-card-template"),
@@ -744,75 +741,203 @@ async function updateTicketStatus(ticket, targetStatus) {
 function renderDashboard() {
   if (!state.dashboard) return;
   renderTicketsToolbar();
-  const t = state.dashboard.totals;
-  const pw = state.dashboard.prevWeek || {};
-  const sl = state.dashboard.sparklines || {};
+  const d = state.dashboard;
+  const t = d.totals;
 
-  const weekTrend = (curr, prev) => {
-    if (prev == null) return null;
-    const d = curr - prev;
-    if (d === 0) return '— same as prev week';
-    return d > 0 ? `↑ +${d} vs prev week` : `↓ ${d} vs prev week`;
-  };
+  // KPI cards row
+  const kpiRow = document.getElementById('kpi-row');
+  if (kpiRow) {
+    const kpis = [
+      { label: 'Total',      value: t.total,      sub: 'All time',                                           color: 'neutral', icon: '≡' },
+      { label: 'Open',       value: t.open,        sub: t.open > 10 ? 'High volume' : 'Under control',       color: t.open > 10 ? 'warning' : 'success', icon: '○', filter: 'status=Open' },
+      { label: 'In Progress',value: t.inProgress,  sub: t.inProgress > 0 ? `${t.inProgress} active` : 'None active', color: 'brand', icon: '◑', filter: 'status=In Progress' },
+      { label: 'Blocked',    value: t.blocked,     sub: t.blocked > 0 ? 'Needs attention' : 'All clear',     color: t.blocked > 0 ? 'danger' : 'success', icon: '⊘', filter: 'status=Blocked' },
+      { label: 'P1 Open',    value: t.p1Open,      sub: t.p1Open > 0 ? 'Critical' : 'None critical',         color: t.p1Open > 0 ? 'danger' : 'success', icon: '▲', filter: 'priority=P1 high' },
+    ];
+    kpiRow.innerHTML = kpis.map(k => `
+      <article class="kpi-card kpi-card--${k.color}${k.filter ? ' kpi-card--clickable' : ''}"${k.filter ? ` data-filter="${escapeHtml(k.filter)}"` : ''}>
+        <span class="kpi-icon" aria-hidden="true">${k.icon}</span>
+        <strong class="kpi-value">${escapeHtml(String(k.value))}</strong>
+        <span class="kpi-label">${escapeHtml(k.label)}</span>
+        <span class="kpi-sub">${escapeHtml(k.sub)}</span>
+      </article>`).join('');
+    kpiRow.querySelectorAll('.kpi-card--clickable').forEach(card => {
+      card.addEventListener('click', () => {
+        const [key, val] = card.dataset.filter.split('=');
+        const el = elements.filtersForm.elements[key === 'priority' ? 'priority' : 'status'];
+        if (el) { el.value = val; el.dispatchEvent(new Event('input', { bubbles: true })); }
+        state.activeTab = 'tickets';
+        renderTabs();
+      });
+    });
+  }
 
-  const sparkHtml = (data) => {
-    if (!data || !data.length) return '';
-    const max = Math.max(...data, 1);
-    return `<div class="sparkline" aria-hidden="true">${data.map(v => `<div class="spark-bar" style="height:${Math.max(2, Math.round(v / max * 100))}%"></div>`).join('')}</div>`;
-  };
+  // Flow chart + delta badge
+  renderSvgFlowChart(elements.weeklyFlowChart, d.weeklyFlow);
+  const flowDelta = document.getElementById('flow-net-delta');
+  if (flowDelta && d.weeklyFlow && d.weeklyFlow.length) {
+    const last = d.weeklyFlow[d.weeklyFlow.length - 1];
+    const delta = (last.closed || 0) - (last.opened || 0);
+    flowDelta.textContent = delta > 0 ? `+${delta} net closed` : delta < 0 ? `${delta} net open` : 'balanced';
+    flowDelta.className = `net-delta-badge ${delta > 0 ? 'success' : delta < 0 ? 'warning' : 'neutral'}`;
+  }
 
-  const cards = [
-    { label: "Total tickets",    value: t.total,            color: "neutral", icon: "≡",  status: "All time" },
-    { label: "Open",             value: t.open,             color: t.open > 10 ? "warning" : "success", icon: "○", status: t.open > 10 ? "High volume" : "Under control", filter: "status=Open", spark: sl.opened },
-    { label: "In Progress",      value: t.inProgress,       color: "brand",   icon: "◑",  status: t.inProgress > 0 ? `${t.inProgress} active` : "None active", filter: "status=In Progress" },
-    { label: "Blocked",          value: t.blocked,          color: t.blocked > 0 ? "danger" : "success", icon: "⊘", status: t.blocked > 0 ? "Needs attention" : "All clear", filter: "status=Blocked" },
-    { label: "P1 Open",          value: t.p1Open,           color: t.p1Open > 0 ? "danger" : "success", icon: "▲", status: t.p1Open > 0 ? "Urgent priority" : "None critical", filter: "priority=P1 high" },
-    { label: "Closed",           value: t.closed,           color: "success", icon: "●",  status: `${t.resolutionRate}% resolved`, spark: sl.closed },
-    { label: "Reopen rate",      value: `${t.reopenRate}%`, color: t.reopenRate > 10 ? "warning" : "success", icon: "↺", status: t.reopenRate > 10 ? "Review quality" : "Low reopen rate" },
-    { label: "Opened this week", value: t.openedThisWeek,   color: "neutral", icon: "↑",  status: "7-day window", trend: weekTrend(t.openedThisWeek, pw.openedThisWeek), spark: sl.opened },
-    { label: "Closed this week", value: t.closedThisWeek,   color: t.closedThisWeek >= t.openedThisWeek ? "success" : "warning", icon: "↓", status: t.closedThisWeek >= t.openedThisWeek ? "On track" : "Behind pace", trend: weekTrend(t.closedThisWeek, pw.closedThisWeek), spark: sl.closed },
-    { label: "Resolution rate",  value: `${t.resolutionRate}%`, color: t.resolutionRate >= 70 ? "success" : t.resolutionRate >= 40 ? "warning" : "danger", icon: "%", status: t.resolutionRate >= 70 ? "Excellent" : t.resolutionRate >= 40 ? "Moderate" : "Needs focus" },
-    { label: "Avg aging",        value: `${t.avgAging}d`,   color: t.avgAging > 10 ? "danger" : t.avgAging > 5 ? "warning" : "success", icon: "⌛", status: t.avgAging <= 5 ? "Healthy" : t.avgAging <= 10 ? "Moderate" : "Review needed" },
-    { label: "SLA breached",     value: t.breachedOpen,     color: t.breachedOpen > 0 ? "danger" : "success", icon: "!", status: t.breachedOpen > 0 ? "Immediate action" : "All compliant" },
-  ];
+  // Status ring
+  renderStatusRing(document.getElementById('status-ring'), d.statusBreakdown);
 
-  elements.summaryCards.innerHTML = cards.map(card => `
-    <article class="summary-card summary-card--${card.color}${card.filter ? ' summary-card--clickable' : ''}"${card.filter ? ` data-filter="${escapeHtml(card.filter)}"` : ''}>
-      <span class="summary-label">${escapeHtml(card.label)}</span>
-      <strong class="summary-value">${escapeHtml(String(card.value))}</strong>
-      <span class="summary-status">${escapeHtml(card.status)}</span>
-      ${card.trend ? `<span class="summary-trend summary-trend--${card.trend.startsWith('↑') ? 'up' : card.trend.startsWith('↓') ? 'down' : 'flat'}">${escapeHtml(card.trend)}</span>` : ''}
-      ${card.spark ? sparkHtml(card.spark) : ''}
-      <span class="summary-icon" aria-hidden="true">${card.icon}</span>
-    </article>`).join("");
+  // Workload table
+  renderWorkloadTable(document.getElementById('workload-table'), d.workload);
 
-  renderVerticalBarChart(
-    elements.openedTrendChart,
-    state.dashboard[`openedBy${capitalize(state.openedPeriod)}`],
-    "Opened"
-  );
-  renderVerticalBarChart(
-    elements.closedTrendChart,
-    state.dashboard[`closedBy${capitalize(state.closedPeriod)}`],
-    "Closed"
-  );
-  renderHorizontalBars(elements.priorityChart, state.dashboard.openByPriority, {
+  // Activity feed
+  renderActivityFeed(document.getElementById('activity-feed'), d.recentActivity);
+
+  // Priority & aging health
+  renderHorizontalBars(elements.priorityChart, d.openByPriority, {
     colorMap: { "P1 high": "danger", "P2 medium": "warning", "P3 low": "neutral" }
   });
-  renderHorizontalBars(elements.assigneeChart, state.dashboard.openByAssignee);
-  renderHorizontalBars(elements.categoryChart, state.dashboard.openByCategory);
-  renderHorizontalBars(elements.managerChart, state.dashboard.openByManager);
-  renderVerticalBarChart(elements.throughputChart, state.dashboard.throughputWeekly, "Closed");
-  renderHorizontalBars(elements.agingBucketsChart, state.dashboard.backlogAgingBuckets, {
+  renderHorizontalBars(elements.agingBucketsChart, d.backlogAgingBuckets, {
     colorMap: { "0-2 days": "success", "3-7 days": "warning", "8-14 days": "danger", "15+ days": "danger" }
   });
-  renderHorizontalBars(elements.statusBreakdownChart, state.dashboard.statusBreakdown, {
-    colorMap: { "Open": "neutral", "In Progress": "brand", "Blocked": "danger", "Closed": "success" }
+
+  // Collapsible detail charts
+  renderHorizontalBars(elements.categoryChart, d.openByCategory);
+  renderHorizontalBars(elements.managerChart, d.openByManager);
+  renderVerticalBarChart(elements.throughputChart, d.throughputWeekly, "Closed");
+  renderVerticalBarChart(elements.openedTrendChart, d[`openedBy${capitalize(state.openedPeriod)}`], "Opened");
+  renderVerticalBarChart(elements.closedTrendChart, d[`closedBy${capitalize(state.closedPeriod)}`], "Closed");
+}
+
+function renderSvgFlowChart(container, data) {
+  if (!container) return;
+  const items = (data || []).slice(-8);
+  if (!items.length) { container.innerHTML = `<p class="empty-state">No data.</p>`; return; }
+
+  const W = 560, H = 180, PAD = { top: 14, right: 12, bottom: 34, left: 28 };
+  const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
+  const maxVal = Math.max(...items.flatMap(d => [d.opened, d.closed]), 1);
+  const xStep = cW / Math.max(items.length - 1, 1);
+  const y = v => PAD.top + cH - Math.round((v / maxVal) * cH);
+  const pts = key => items.map((d, i) => [PAD.left + i * xStep, y(d[key])]);
+
+  const area = (points, color) => {
+    const line = points.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
+    const close = `L${points[points.length - 1][0].toFixed(1)},${(PAD.top + cH).toFixed(1)} L${points[0][0].toFixed(1)},${(PAD.top + cH).toFixed(1)} Z`;
+    return `<path d="${line} ${close}" fill="${color}" opacity="0.12"/>
+            <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  };
+
+  const dots = (points, color) => points.map(p =>
+    `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${color}" stroke="var(--surface)" stroke-width="1.5"/>`
+  ).join('');
+
+  const axisLabels = items.map((d, i) =>
+    `<text x="${(PAD.left + i * xStep).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="svg-axis-label">${escapeHtml(d.label)}</text>`
+  ).join('');
+
+  const openedPts = pts('opened'), closedPts = pts('closed');
+
+  container.innerHTML = `
+    <svg viewBox="0 0 ${W} ${H}" class="svg-flow" role="img" aria-label="Weekly ticket flow chart" preserveAspectRatio="xMidYMid meet">
+      <line x1="${PAD.left}" y1="${PAD.top + cH}" x2="${W - PAD.right}" y2="${PAD.top + cH}" stroke="var(--border)" stroke-width="1"/>
+      ${area(openedPts, 'var(--brand)')}
+      ${area(closedPts, 'var(--success)')}
+      ${dots(openedPts, 'var(--brand)')}
+      ${dots(closedPts, 'var(--success)')}
+      ${axisLabels}
+    </svg>
+    <div class="chart-legend">
+      <span><span class="legend-dot" style="background:var(--brand)"></span>Opened</span>
+      <span><span class="legend-dot" style="background:var(--success)"></span>Closed</span>
+    </div>`;
+}
+
+function renderStatusRing(container, data) {
+  if (!container) return;
+  const items = (data || []).filter(d => d.value > 0);
+  if (!items.length) { container.innerHTML = `<p class="empty-state">No data.</p>`; return; }
+
+  const colorMap = { 'Open': 'var(--neutral-fg)', 'In Progress': 'var(--brand)', 'Blocked': 'var(--danger)', 'Closed': 'var(--success)' };
+  const total = items.reduce((s, d) => s + d.value, 0) || 1;
+  const R = 54, CX = 70, CY = 70, STROKE = 20;
+  const circ = 2 * Math.PI * R;
+
+  let offset = 0;
+  const segments = items.map(item => {
+    const dash = (item.value / total) * circ;
+    const gap = circ - dash;
+    const seg = `<circle cx="${CX}" cy="${CY}" r="${R}" fill="none"
+      stroke="${colorMap[item.label] || 'var(--muted)'}" stroke-width="${STROKE}"
+      stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}"
+      stroke-dashoffset="${(-offset).toFixed(2)}"
+      transform="rotate(-90 ${CX} ${CY})"><title>${item.label}: ${item.value}</title></circle>`;
+    offset += dash;
+    return seg;
   });
-  renderWeeklyFlowChart(elements.weeklyFlowChart, state.dashboard.weeklyFlow);
+
+  const legend = items.map(item => `
+    <div class="ring-legend-row">
+      <span class="ring-dot" style="background:${colorMap[item.label] || 'var(--muted)'}"></span>
+      <span class="ring-label">${escapeHtml(item.label)}</span>
+      <strong class="ring-count">${item.value}</strong>
+      <span class="ring-pct muted">${Math.round(item.value / total * 100)}%</span>
+    </div>`).join('');
+
+  container.innerHTML = `
+    <div class="ring-layout">
+      <svg viewBox="0 0 140 140" class="svg-ring" role="img" aria-label="Status distribution donut chart">
+        ${segments.join('')}
+        <text x="${CX}" y="${CY - 4}" text-anchor="middle" class="ring-total-value">${total}</text>
+        <text x="${CX}" y="${CY + 14}" text-anchor="middle" class="ring-total-sub">tickets</text>
+      </svg>
+      <div class="ring-legend">${legend}</div>
+    </div>`;
+}
+
+function renderWorkloadTable(container, data) {
+  if (!container) return;
+  const items = (data || []);
+  if (!items.length) { container.innerHTML = `<p class="empty-state">No workload data.</p>`; return; }
+  const maxTotal = Math.max(...items.map(d => d.total), 1);
+
+  container.innerHTML = `
+    <table class="wl-table">
+      <thead><tr><th>Assignee</th><th title="Open">○</th><th title="In Progress">◑</th><th title="Blocked">⊘</th><th class="wl-bar-col">Load</th></tr></thead>
+      <tbody>${items.map(row => `
+        <tr>
+          <td class="wl-name">${escapeHtml(row.assignee || '—')}</td>
+          <td class="wl-num">${row.open}</td>
+          <td class="wl-num">${row.inProgress}</td>
+          <td class="wl-num${row.blocked > 0 ? ' wl-num--danger' : ''}">${row.blocked}</td>
+          <td class="wl-bar-col"><div class="wl-bar-track"><div class="wl-bar-fill" style="width:${Math.round(row.total / maxTotal * 100)}%"></div></div></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function renderActivityFeed(container, data) {
+  if (!container) return;
+  const items = (data || []);
+  if (!items.length) { container.innerHTML = `<p class="empty-state">No recent activity.</p>`; return; }
+  const statusSlug = s => (s || '').toLowerCase().replace(/\s+/g, '-');
+
+  container.innerHTML = items.map(item => `
+    <div class="af-item">
+      <span class="af-dot"></span>
+      <div class="af-body">
+        <p class="af-ticket">#${escapeHtml(String(item.jd_ticket_number || item.ticket_id))}
+          <span class="af-desc">${escapeHtml((item.description || '').slice(0, 60))}${(item.description || '').length > 60 ? '…' : ''}</span>
+        </p>
+        <p class="af-comment">${escapeHtml((item.comment || '').slice(0, 90))}${(item.comment || '').length > 90 ? '…' : ''}</p>
+        <p class="af-meta">
+          <span class="status-pill status-pill--${statusSlug(item.status)}">${escapeHtml(item.status || '')}</span>
+          <span class="muted">${formatIsoDate(item.created_at)}</span>
+        </p>
+      </div>
+    </div>`).join('');
 }
 
 function renderVerticalBarChart(container, data, unitLabel) {
+  if (!container) return;
   const items = (data || []).slice(-10);
   if (!items.length) {
     container.innerHTML = `<p class="empty-state">No data available.</p>`;
@@ -833,6 +958,7 @@ function renderVerticalBarChart(container, data, unitLabel) {
 }
 
 function renderHorizontalBars(container, data, opts = {}) {
+  if (!container) return;
   const items = data && data.length ? data : [];
   if (!items.length) {
     container.innerHTML = `<p class="empty-state">No data available.</p>`;
@@ -852,29 +978,6 @@ function renderHorizontalBars(container, data, opts = {}) {
             <span class="h-value">${item.value}</span>
           </div>`;
       }).join("")}
-    </div>`;
-}
-
-function renderWeeklyFlowChart(container, data) {
-  if (!container) return;
-  const items = (data || []);
-  if (!items.length) { container.innerHTML = `<p class="empty-state">No data.</p>`; return; }
-  const max = Math.max(...items.flatMap(d => [d.opened, d.closed]), 1);
-  container.innerHTML = `
-    <div class="v-chart">
-      ${items.map(item => `
-        <div class="v-bar-group">
-          <span class="v-bar-value" style="font-size:.62rem;color:var(--muted)">${item.opened}/${item.closed}</span>
-          <div class="v-bar-track v-bar-track--dual">
-            <div class="v-bar-fill v-bar-fill--opened" style="height:${item.opened ? Math.max(4, Math.round((item.opened / max) * 100)) : 0}%" title="Opened: ${item.opened}"></div>
-            <div class="v-bar-fill v-bar-fill--closed" style="height:${item.closed ? Math.max(4, Math.round((item.closed / max) * 100)) : 0}%" title="Closed: ${item.closed}"></div>
-          </div>
-          <span class="v-bar-label">${escapeHtml(item.label)}</span>
-        </div>`).join("")}
-    </div>
-    <div class="chart-legend">
-      <span><span class="legend-dot legend-dot--opened"></span>Opened</span>
-      <span><span class="legend-dot legend-dot--closed"></span>Closed</span>
     </div>`;
 }
 

@@ -93,6 +93,33 @@
         </nav>
 
         <section id="tab-entry" class="tab-panel">
+
+          <!-- Data Tools: Import / Export -->
+          <section class="panel" id="tools-panel">
+            <div class="chart-head">
+              <div><p class="eyebrow">Data Tools</p><h3>Import &amp; Export</h3></div>
+            </div>
+            <div class="tools-grid">
+              <div class="tool-card tool-card--manager" id="tool-import-card">
+                <div class="tool-card-icon">⬆</div>
+                <div class="tool-card-body">
+                  <strong>Import from CSV</strong>
+                  <p class="muted">Upload a CSV file to bulk-create tickets. Partial rows accepted with defaults applied.</p>
+                </div>
+                <button type="button" id="import-csv" class="ghost small-button">Import CSV</button>
+              </div>
+              <div class="tool-card">
+                <div class="tool-card-icon">⬇</div>
+                <div class="tool-card-body">
+                  <strong>Export to CSV</strong>
+                  <p class="muted">Download all current filtered tickets as a spreadsheet-ready UTF-8 CSV file.</p>
+                </div>
+                <button type="button" id="export-csv" class="ghost small-button">Export CSV</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Import History — managers/admins only -->
           <section class="panel" id="import-history-panel">
             <div class="chart-head">
               <div>
@@ -224,83 +251,93 @@
         </section>
 
         <section id="tab-dashboards" class="tab-panel">
-          <div class="dashboard-header">
+          <div class="dash-header">
             <div>
-              <h2 class="dashboard-title">Operations Dashboard</h2>
-              <p class="dashboard-meta" id="dashboard-updated">Loading…</p>
+              <p class="eyebrow">Operations Intelligence</p>
+              <h2 class="dashboard-title">Live Dashboard</h2>
             </div>
-            <button type="button" id="refresh-dashboard" class="ghost" style="font-size:.82rem;align-self:flex-start">↺ Refresh</button>
+            <div class="dash-header-right">
+              <span class="muted" id="dashboard-updated" style="font-size:.78rem">Loading…</span>
+              <button type="button" id="refresh-dashboard" class="ghost small-button">↺ Refresh</button>
+            </div>
           </div>
-          <p class="section-label">Key metrics</p>
-          <section id="summary-cards" class="summary-grid"></section>
-          <p class="section-label">Ticket flow</p>
 
-          <section class="charts-grid charts-grid--wide">
-            <article class="panel chart-panel chart-panel--wide">
-              <div class="chart-head">
-                <h3>Weekly opened vs closed</h3>
-                <span class="muted" style="font-size:.82rem">Last 8 weeks</span>
-              </div>
-              <div id="weekly-flow-chart"></div>
-            </article>
-          </section>
+          <!-- Row 1: 5 KPI cards -->
+          <div class="kpi-row" id="kpi-row"></div>
 
-          <p class="section-label">Trends &amp; breakdown</p>
-          <section class="charts-grid">
-            <article class="panel chart-panel">
+          <!-- Row 2: Flow chart + Status ring -->
+          <div class="dash-row-wide">
+            <article class="panel dash-chart-main">
               <div class="chart-head">
-                <h3>Opened by period</h3>
-                <div class="segmented">
-                  <button type="button" data-period="day" class="period-button active">Day</button>
-                  <button type="button" data-period="week" class="period-button">Week</button>
-                  <button type="button" data-period="month" class="period-button">Month</button>
-                </div>
+                <div><p class="eyebrow">Ticket Flow</p><h3>Opened vs Closed — last 8 weeks</h3></div>
+                <span id="flow-net-delta" class="net-delta-badge neutral"></span>
               </div>
-              <div id="opened-trend-chart"></div>
+              <div id="weekly-flow-chart" class="svg-chart-wrap"></div>
             </article>
-            <article class="panel chart-panel">
-              <div class="chart-head">
-                <h3>Closed by period</h3>
-                <div class="segmented">
-                  <button type="button" data-period="day" class="closed-period-button active">Day</button>
-                  <button type="button" data-period="week" class="closed-period-button">Week</button>
-                  <button type="button" data-period="month" class="closed-period-button">Month</button>
-                </div>
-              </div>
-              <div id="closed-trend-chart"></div>
+            <article class="panel dash-status-panel">
+              <div class="chart-head"><div><p class="eyebrow">Status Ring</p><h3>Current distribution</h3></div></div>
+              <div id="status-ring" class="status-ring-wrap"></div>
             </article>
-            <article class="panel chart-panel">
-              <div class="chart-head"><h3>Open by priority</h3><span class="chart-subtitle">Current open tickets</span></div>
+          </div>
+
+          <!-- Row 3: Workload + Activity + Priority/Aging -->
+          <div class="dash-row-three">
+            <article class="panel">
+              <div class="chart-head"><div><p class="eyebrow">Team Workload</p><h3>Open tickets per assignee</h3></div></div>
+              <div id="workload-table" class="workload-table"></div>
+            </article>
+            <article class="panel">
+              <div class="chart-head"><div><p class="eyebrow">Recent Activity</p><h3>Latest updates</h3></div></div>
+              <div id="activity-feed" class="activity-feed"></div>
+            </article>
+            <article class="panel">
+              <div class="chart-head"><div><p class="eyebrow">Backlog Health</p><h3>Priority &amp; aging</h3></div></div>
               <div id="priority-chart"></div>
-            </article>
-            <article class="panel chart-panel">
-              <div class="chart-head"><h3>Open by assignee</h3><span class="chart-subtitle">Workload distribution</span></div>
-              <div id="assignee-chart"></div>
-            </article>
-            <article class="panel chart-panel">
-              <div class="chart-head"><h3>Open by category</h3><span class="chart-subtitle">Topic distribution</span></div>
-              <div id="category-chart"></div>
-            </article>
-            <article class="panel chart-panel">
-              <div class="chart-head"><h3>Open by manager</h3><span class="chart-subtitle">Team breakdown</span></div>
-              <div id="manager-chart"></div>
-            </article>
-            <article class="panel chart-panel">
-              <div class="chart-head"><h3>Throughput by week</h3><span class="chart-subtitle">Closed tickets</span></div>
-              <div id="throughput-chart"></div>
-            </article>
-            <article class="panel chart-panel">
-              <div class="chart-head"><h3>Backlog aging</h3><span class="chart-subtitle">Days since opened</span></div>
+              <p class="section-label" style="margin:14px 0 6px">Aging buckets</p>
               <div id="aging-buckets-chart"></div>
             </article>
-          </section>
+          </div>
 
-          <section class="charts-grid charts-grid--wide">
-            <article class="panel chart-panel chart-panel--wide">
-              <div class="chart-head"><h3>Status breakdown</h3><span class="chart-subtitle">All open tickets by status</span></div>
-              <div id="status-breakdown-chart"></div>
-            </article>
-          </section>
+          <!-- Row 4: collapsible detail charts -->
+          <details class="dash-details">
+            <summary>More charts — category, throughput, trends by period</summary>
+            <div class="charts-grid">
+              <article class="panel chart-panel">
+                <div class="chart-head"><h3>Open by category</h3></div>
+                <div id="category-chart"></div>
+              </article>
+              <article class="panel chart-panel">
+                <div class="chart-head"><h3>Open by manager</h3></div>
+                <div id="manager-chart"></div>
+              </article>
+              <article class="panel chart-panel">
+                <div class="chart-head"><h3>Throughput by week</h3></div>
+                <div id="throughput-chart"></div>
+              </article>
+              <article class="panel chart-panel">
+                <div class="chart-head">
+                  <h3>Opened by period</h3>
+                  <div class="segmented">
+                    <button type="button" data-period="day" class="period-button active">Day</button>
+                    <button type="button" data-period="week" class="period-button">Week</button>
+                    <button type="button" data-period="month" class="period-button">Month</button>
+                  </div>
+                </div>
+                <div id="opened-trend-chart"></div>
+              </article>
+              <article class="panel chart-panel">
+                <div class="chart-head">
+                  <h3>Closed by period</h3>
+                  <div class="segmented">
+                    <button type="button" data-period="day" class="closed-period-button active">Day</button>
+                    <button type="button" data-period="week" class="closed-period-button">Week</button>
+                    <button type="button" data-period="month" class="closed-period-button">Month</button>
+                  </div>
+                </div>
+                <div id="closed-trend-chart"></div>
+              </article>
+            </div>
+          </details>
         </section>
 
         <section id="tab-roles" class="tab-panel">
