@@ -51,12 +51,7 @@ const elements = {
   ticketsTableBody: document.querySelector("#tickets-table-body"),
   ticketCount: document.querySelector("#ticket-count"),
   message: document.querySelector("#message"),
-  openedTrendChart: document.querySelector("#opened-trend-chart"),
-  closedTrendChart: document.querySelector("#closed-trend-chart"),
   priorityChart: document.querySelector("#priority-chart"),
-  categoryChart: document.querySelector("#category-chart"),
-  managerChart: document.querySelector("#manager-chart"),
-  throughputChart: document.querySelector("#throughput-chart"),
   agingBucketsChart: document.querySelector("#aging-buckets-chart"),
   weeklyFlowChart: document.querySelector("#weekly-flow-chart"),
   atRiskPanel: document.querySelector("#at-risk-panel"),
@@ -809,8 +804,10 @@ function renderDashboard() {
     flowDelta.className = `net-delta-badge ${delta > 0 ? 'success' : delta < 0 ? 'warning' : 'neutral'}`;
   }
 
-  // Status ring
-  renderStatusRing(document.getElementById('status-ring'), d.statusBreakdown);
+  // Comparison charts
+  renderLeadTimeChart(document.getElementById('lead-time-chart'), d.leadTimeDistribution);
+  renderCategoryTrendChart(document.getElementById('category-trend-chart'), d.categoryTrend);
+  renderHorizontalBars(document.getElementById('closed-assignee-chart'), d.closedByAssignee);
 
   // Workload table
   renderWorkloadTable(document.getElementById('workload-table'), d.workload);
@@ -825,13 +822,6 @@ function renderDashboard() {
   renderHorizontalBars(elements.agingBucketsChart, d.backlogAgingBuckets, {
     colorMap: { "0-2 days": "success", "3-7 days": "warning", "8-14 days": "danger", "15+ days": "danger" }
   });
-
-  // Collapsible detail charts
-  renderHorizontalBars(elements.categoryChart, d.openByCategory);
-  renderHorizontalBars(elements.managerChart, d.openByManager);
-  renderVerticalBarChart(elements.throughputChart, d.throughputWeekly, "Closed");
-  renderVerticalBarChart(elements.openedTrendChart, d[`openedBy${capitalize(state.openedPeriod)}`], "Opened");
-  renderVerticalBarChart(elements.closedTrendChart, d[`closedBy${capitalize(state.closedPeriod)}`], "Closed");
 }
 
 function renderSvgFlowChart(container, data) {
@@ -875,6 +865,54 @@ function renderSvgFlowChart(container, data) {
     <div class="chart-legend">
       <span><span class="legend-dot" style="background:var(--brand)"></span>Opened</span>
       <span><span class="legend-dot" style="background:var(--success)"></span>Closed</span>
+    </div>`;
+}
+
+function renderLeadTimeChart(container, data) {
+  if (!container) return;
+  const items = (data || []);
+  if (!items.length) { container.innerHTML = '<p class="empty-state">No closed tickets yet.</p>'; return; }
+  const max = Math.max(...items.map(d => d.value), 1);
+  const colors = ['#25a87e','#4db87a','#f5a623','#e8734a','#d94f4f'];
+  const W = 340, H = 160, PAD = { top: 20, right: 10, bottom: 28, left: 28 };
+  const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
+  const bW = Math.floor(cW / items.length) - 6;
+  const bars = items.map((item, i) => {
+    const bH = item.value ? Math.max(4, Math.round((item.value / max) * cH)) : 0;
+    const x = PAD.left + i * (bW + 6);
+    const y = PAD.top + cH - bH;
+    return `<rect x="${x}" y="${y}" width="${bW}" height="${bH}" rx="3" fill="${colors[i] || '#888'}"/>
+            <text x="${x + bW/2}" y="${y - 4}" text-anchor="middle" class="svg-bar-value">${item.value || ''}</text>
+            <text x="${x + bW/2}" y="${H - 6}" text-anchor="middle" class="svg-axis-label">${item.label}</text>`;
+  }).join('');
+  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="svg-vbar" role="img" aria-label="Lead time distribution">${bars}</svg>`;
+}
+
+function renderCategoryTrendChart(container, data) {
+  if (!container) return;
+  const items = (data || []);
+  if (!items.length) { container.innerHTML = '<p class="empty-state">No data.</p>'; return; }
+  const max = Math.max(...items.flatMap(d => [d.thisMonth, d.prevMonth]), 1);
+  container.innerHTML = `
+    <div class="cmp-chart">
+      ${items.map(item => `
+        <div class="cmp-row">
+          <span class="cmp-label" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+          <div class="cmp-bars">
+            <div class="cmp-bar-group">
+              <div class="cmp-bar cmp-bar--current" style="width:${Math.max(item.thisMonth ? 4 : 0, Math.round(item.thisMonth/max*100))}%" title="This month: ${item.thisMonth}"></div>
+              <span class="cmp-val">${item.thisMonth}</span>
+            </div>
+            <div class="cmp-bar-group">
+              <div class="cmp-bar cmp-bar--prev" style="width:${Math.max(item.prevMonth ? 4 : 0, Math.round(item.prevMonth/max*100))}%" title="Last month: ${item.prevMonth}"></div>
+              <span class="cmp-val cmp-val--prev">${item.prevMonth}</span>
+            </div>
+          </div>
+        </div>`).join('')}
+    </div>
+    <div class="chart-legend" style="margin-top:10px">
+      <span><span class="legend-dot" style="background:var(--brand)"></span>This month</span>
+      <span><span class="legend-dot" style="background:var(--muted);opacity:.5"></span>Last month</span>
     </div>`;
 }
 

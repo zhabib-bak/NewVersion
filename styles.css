@@ -897,9 +897,12 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
 .kpi-card--brand   { border-left: 3px solid var(--brand); }
 
 /* ─── DASHBOARD LAYOUT ROWS ──────────────────────────────────────────────────── */
+.dash-row-full { margin-bottom: 16px; }
+.dash-row-full .panel { display: flex; flex-direction: column; }
+
 .dash-row-wide {
   display: grid;
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: 1.2fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -910,7 +913,25 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
   margin-bottom: 16px;
 }
 .dash-chart-main { display: flex; flex-direction: column; }
-.dash-status-panel { display: flex; flex-direction: column; }
+
+/* Health row (side by side priority + aging) */
+.dash-row-health { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+/* SVG vertical bar chart */
+.svg-vbar { width: 100%; overflow: visible; }
+.svg-bar-value { font-size: 10px; fill: var(--muted); font-family: inherit; }
+
+/* Category comparison chart */
+.cmp-chart { display: flex; flex-direction: column; gap: 10px; }
+.cmp-row { display: flex; align-items: flex-start; gap: 10px; }
+.cmp-label { font-size: .78rem; min-width: 90px; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 3px; }
+.cmp-bars { flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.cmp-bar-group { display: flex; align-items: center; gap: 6px; }
+.cmp-bar { height: 10px; border-radius: 3px; transition: width .4s ease; min-width: 0; }
+.cmp-bar--current { background: var(--brand); }
+.cmp-bar--prev { background: var(--muted); opacity: .45; }
+.cmp-val { font-size: .72rem; color: var(--muted); min-width: 18px; }
+.cmp-val--prev { opacity: .7; }
 
 /* ─── SVG FLOW CHART ─────────────────────────────────────────────────────────── */
 .svg-chart-wrap { flex: 1; min-height: 180px; display: flex; flex-direction: column; }
@@ -1115,6 +1136,7 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
   .kpi-row { grid-template-columns: repeat(3, 1fr); }
   .dash-row-wide { grid-template-columns: 1fr; }
   .dash-row-three { grid-template-columns: 1fr 1fr; }
+  .dash-row-health { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 1180px) {

@@ -282,8 +282,8 @@
             <div id="at-risk-table"></div>
           </article>
 
-          <!-- Row 2: Flow chart + Status ring -->
-          <div class="dash-row-wide">
+          <!-- Row 2: Full-width flow chart -->
+          <div class="dash-row-full">
             <article class="panel dash-chart-main">
               <div class="chart-head">
                 <div><p class="eyebrow">Ticket Flow</p><h3>Opened vs Closed — last 8 weeks</h3></div>
@@ -291,14 +291,26 @@
               </div>
               <div id="weekly-flow-chart" class="svg-chart-wrap"></div>
             </article>
-            <article class="panel dash-status-panel">
-              <div class="chart-head"><div><p class="eyebrow">Status Ring</p><h3>Current distribution</h3></div></div>
-              <div id="status-ring" class="status-ring-wrap"></div>
+          </div>
+
+          <!-- Row 3: Three comparison charts -->
+          <div class="dash-row-three">
+            <article class="panel">
+              <div class="chart-head"><div><p class="eyebrow">Resolution Speed</p><h3>Lead time distribution</h3></div></div>
+              <div id="lead-time-chart"></div>
+            </article>
+            <article class="panel">
+              <div class="chart-head"><div><p class="eyebrow">Volume by Category</p><h3>This month vs last month</h3></div></div>
+              <div id="category-trend-chart"></div>
+            </article>
+            <article class="panel">
+              <div class="chart-head"><div><p class="eyebrow">Assignee Performance</p><h3>Tickets closed per person</h3></div></div>
+              <div id="closed-assignee-chart"></div>
             </article>
           </div>
 
-          <!-- Row 3: Workload + Activity + Priority/Aging -->
-          <div class="dash-row-three">
+          <!-- Row 4: Workload + Activity -->
+          <div class="dash-row-wide">
             <article class="panel">
               <div class="chart-head"><div><p class="eyebrow">Team Workload</p><h3>Open tickets per assignee</h3></div></div>
               <div id="workload-table" class="workload-table"></div>
@@ -307,54 +319,16 @@
               <div class="chart-head"><div><p class="eyebrow">Recent Activity</p><h3>Latest updates</h3></div></div>
               <div id="activity-feed" class="activity-feed"></div>
             </article>
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Backlog Health</p><h3>Priority &amp; aging</h3></div></div>
-              <div id="priority-chart"></div>
-              <p class="section-label" style="margin:14px 0 6px">Aging buckets</p>
-              <div id="aging-buckets-chart"></div>
-            </article>
           </div>
 
-          <!-- Row 4: collapsible detail charts -->
-          <details class="dash-details">
-            <summary>More charts — category, throughput, trends by period</summary>
-            <div class="charts-grid">
-              <article class="panel chart-panel">
-                <div class="chart-head"><h3>Open by category</h3></div>
-                <div id="category-chart"></div>
-              </article>
-              <article class="panel chart-panel">
-                <div class="chart-head"><h3>Open by manager</h3></div>
-                <div id="manager-chart"></div>
-              </article>
-              <article class="panel chart-panel">
-                <div class="chart-head"><h3>Throughput by week</h3></div>
-                <div id="throughput-chart"></div>
-              </article>
-              <article class="panel chart-panel">
-                <div class="chart-head">
-                  <h3>Opened by period</h3>
-                  <div class="segmented">
-                    <button type="button" data-period="day" class="period-button active">Day</button>
-                    <button type="button" data-period="week" class="period-button">Week</button>
-                    <button type="button" data-period="month" class="period-button">Month</button>
-                  </div>
-                </div>
-                <div id="opened-trend-chart"></div>
-              </article>
-              <article class="panel chart-panel">
-                <div class="chart-head">
-                  <h3>Closed by period</h3>
-                  <div class="segmented">
-                    <button type="button" data-period="day" class="closed-period-button active">Day</button>
-                    <button type="button" data-period="week" class="closed-period-button">Week</button>
-                    <button type="button" data-period="month" class="closed-period-button">Month</button>
-                  </div>
-                </div>
-                <div id="closed-trend-chart"></div>
-              </article>
+          <!-- Row 5: Backlog health (keep) -->
+          <article class="panel">
+            <div class="chart-head"><div><p class="eyebrow">Backlog Health</p><h3>Priority &amp; aging</h3></div></div>
+            <div class="dash-row-health">
+              <div id="priority-chart"></div>
+              <div id="aging-buckets-chart"></div>
             </div>
-          </details>
+          </article>
         </section>
 
         <section id="tab-roles" class="tab-panel">

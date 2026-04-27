@@ -1085,6 +1085,26 @@ function getDashboardData() {
         `).all();
       } catch { return []; }
     })(),
+    leadTimeDistribution: [
+      { label: '<1d',   value: leadTimes.filter(d => d < 1).length },
+      { label: '1–3d',  value: leadTimes.filter(d => d >= 1 && d < 3).length },
+      { label: '3–7d',  value: leadTimes.filter(d => d >= 3 && d < 7).length },
+      { label: '7–14d', value: leadTimes.filter(d => d >= 7 && d < 14).length },
+      { label: '14+d',  value: leadTimes.filter(d => d >= 14).length },
+    ],
+    closedByAssignee: countBy(closed, 'assignee').slice(0, 10),
+    categoryTrend: (() => {
+      const now = new Date();
+      const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+      const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
+      const cats = [...new Set(all.map(t => t.category).filter(Boolean))];
+      return cats.map(cat => {
+        const catAll = all.filter(t => t.category === cat);
+        const thisMonth = catAll.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= thisMonthStart).length;
+        const prevMonth = catAll.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= prevMonthStart && Date.parse(`${t.date_opening}T00:00:00Z`) < thisMonthStart).length;
+        return { label: cat, thisMonth, prevMonth };
+      }).filter(r => r.thisMonth > 0 || r.prevMonth > 0).sort((a, b) => (b.thisMonth + b.prevMonth) - (a.thisMonth + a.prevMonth)).slice(0, 8);
+    })(),
   };
 }
 
