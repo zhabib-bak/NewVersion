@@ -701,6 +701,21 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
 .page-num-btn.pg-current { background: rgba(99,179,237,0.18); color: var(--accent); border-color: rgba(99,179,237,0.4); font-weight: 600; }
 #page-prev:disabled, #page-next:disabled,
 #page-first:disabled, #page-last:disabled { opacity: 0.35; cursor: default; }
+.per-page-label { font-size: 0.82rem; color: var(--muted); display: flex; align-items: center; gap: 5px; margin-right: 6px; }
+.per-page-label select { font-size: 0.82rem; padding: 3px 6px; background: var(--panel-bg, #0c141f); border: 1px solid rgba(153,173,197,0.2); border-radius: 6px; color: var(--fg); }
+
+/* Kanban column pagination */
+.kanban-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(153,173,197,0.1);
+}
+.kp-info { font-size: 0.78rem; color: var(--muted); }
+.kp-prev:disabled, .kp-next:disabled { opacity: 0.35; cursor: default; }
 
 .attachments-section { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--panel-border); }
 .attachment-item {

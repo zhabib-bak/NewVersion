@@ -20,7 +20,9 @@ const state = {
   importMapping: {},
   currentPage: 1,
   totalPages: 1,
-  totalTickets: 0
+  totalTickets: 0,
+  perPage: 50,
+  kanbanPages: {}
 };
 
 const elements = {
@@ -429,7 +431,7 @@ async function refreshTickets() {
   try {
     const params = new URLSearchParams(new FormData(elements.filtersForm));
     params.set("page", state.currentPage);
-    params.set("per_page", "50");
+    params.set("per_page", String(state.perPage));
     const data = await apiFetch(`/api/tickets?${params.toString()}`);
     state.tickets = data.tickets;
     state.currentPage = data.page;
@@ -516,9 +518,9 @@ function updateActiveFiltersBanner() {
 }
 
 function renderTickets() {
-  const { currentPage, totalTickets, tickets } = state;
-  const from = totalTickets === 0 ? 0 : (currentPage - 1) * 50 + 1;
-  const to = Math.min(currentPage * 50, totalTickets);
+  const { currentPage, totalTickets, perPage } = state;
+  const from = totalTickets === 0 ? 0 : (currentPage - 1) * perPage + 1;
+  const to = Math.min(currentPage * perPage, totalTickets);
   elements.ticketCount.textContent = totalTickets === 0 ? "0 tickets" : `Showing ${from}–${to} of ${totalTickets} tickets`;
   updateActiveFiltersBanner();
   elements.ticketsTableBody.innerHTML = state.tickets
@@ -547,32 +549,58 @@ function renderTickets() {
   });
 }
 
+const KANBAN_PAGE_SIZE = 5;
+
 function renderKanban() {
   const statusColumns = ["Open", "In Progress", "Blocked", "Closed"];
   const roleCanMove = state.currentUser && (state.currentUser.role === "manager" || state.currentUser.role === "admin");
-  elements.kanbanBoard.innerHTML = statusColumns
-    .map((status) => {
-      const items = state.tickets.filter((ticket) => ticket.status === status);
-      return `
-        <section class="kanban-column" data-drop-status="${status}">
-          <header><h4>${status}</h4><span>${items.length}</span></header>
-          <div class="kanban-cards">
-            ${items
-              .map(
-                (ticket) => `
-                  <article class="kanban-card" draggable="${roleCanMove}" data-ticket-id="${ticket.id}">
-                    <strong>${escapeHtml(ticket.jd_ticket_number)}</strong>
-                    <p>${escapeHtml(ticket.description)}</p>
-                    <div class="table-subtext">${escapeHtml(ticket.assignee)} • ${escapeHtml(ticket.priority)}</div>
-                  </article>
-                `
-              )
-              .join("")}
-          </div>
-        </section>
-      `;
-    })
-    .join("");
+
+  elements.kanbanBoard.innerHTML = statusColumns.map((status) => {
+    const allItems = state.tickets.filter((t) => t.status === status);
+    const totalKPages = Math.max(1, Math.ceil(allItems.length / KANBAN_PAGE_SIZE));
+    const kPage = Math.min(state.kanbanPages[status] || 1, totalKPages);
+    state.kanbanPages[status] = kPage;
+    const items = allItems.slice((kPage - 1) * KANBAN_PAGE_SIZE, kPage * KANBAN_PAGE_SIZE);
+
+    const pagination = totalKPages > 1 ? `
+      <div class="kanban-pagination">
+        <button class="ghost small-button kp-prev" data-status="${status}" ${kPage <= 1 ? 'disabled' : ''}>‹</button>
+        <span class="kp-info">${kPage} / ${totalKPages}</span>
+        <button class="ghost small-button kp-next" data-status="${status}" ${kPage >= totalKPages ? 'disabled' : ''}>›</button>
+      </div>` : '';
+
+    return `
+      <section class="kanban-column" data-drop-status="${status}">
+        <header><h4>${status}</h4><span>${allItems.length}</span></header>
+        <div class="kanban-cards">
+          ${items.map((ticket) => `
+            <article class="kanban-card" draggable="${roleCanMove}" data-ticket-id="${ticket.id}">
+              <strong>${escapeHtml(ticket.jd_ticket_number)}</strong>
+              <p>${escapeHtml(ticket.description)}</p>
+              <div class="table-subtext">${escapeHtml(ticket.assignee)} • ${escapeHtml(ticket.priority)}</div>
+            </article>
+          `).join("")}
+        </div>
+        ${pagination}
+      </section>
+    `;
+  }).join("");
+
+  document.querySelectorAll(".kp-prev").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const st = e.currentTarget.dataset.status;
+      state.kanbanPages[st] = Math.max(1, (state.kanbanPages[st] || 1) - 1);
+      renderKanban();
+    });
+  });
+  document.querySelectorAll(".kp-next").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      const st = e.currentTarget.dataset.status;
+      const total = Math.ceil(state.tickets.filter((t) => t.status === st).length / KANBAN_PAGE_SIZE);
+      state.kanbanPages[st] = Math.min(total, (state.kanbanPages[st] || 1) + 1);
+      renderKanban();
+    });
+  });
 
   if (!roleCanMove) return;
   document.querySelectorAll(".kanban-card").forEach((card) => {
@@ -614,30 +642,36 @@ function buildPageNumbers(current, total) {
 function renderPagination() {
   const el = document.getElementById('pagination-controls');
   if (!el) return;
-  const { currentPage, totalPages, totalTickets } = state;
-  const from = totalTickets === 0 ? 0 : (currentPage - 1) * 50 + 1;
-  const to = Math.min(currentPage * 50, totalTickets);
+  const { currentPage, totalPages, totalTickets, perPage } = state;
+  const from = totalTickets === 0 ? 0 : (currentPage - 1) * perPage + 1;
+  const to = Math.min(currentPage * perPage, totalTickets);
   const countInfo = `<span class="pagination-info">${totalTickets === 0 ? '0 tickets' : `${from}–${to} of ${totalTickets} ticket${totalTickets !== 1 ? 's' : ''}`}</span>`;
+  const perPageSelect = `<label class="per-page-label">Show <select id="per-page-select">${[25, 50, 100].map((n) => `<option value="${n}"${n === perPage ? ' selected' : ''}>${n}</option>`).join('')}</select></label>`;
 
   if (totalPages <= 1) {
-    el.innerHTML = countInfo;
-    return;
+    el.innerHTML = `${perPageSelect} ${countInfo}`;
+  } else {
+    el.innerHTML = `
+      ${perPageSelect}
+      <button type="button" class="ghost small-button" id="page-first" ${currentPage <= 1 ? 'disabled' : ''} title="First page">«</button>
+      <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
+      ${buildPageNumbers(currentPage, totalPages)}
+      <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
+      <button type="button" class="ghost small-button" id="page-last" ${currentPage >= totalPages ? 'disabled' : ''} title="Last page">»</button>
+      ${countInfo}
+    `;
+    document.getElementById('page-first')?.addEventListener('click', () => { state.currentPage = 1; refreshTickets(); });
+    document.getElementById('page-prev')?.addEventListener('click', () => { state.currentPage = Math.max(1, state.currentPage - 1); refreshTickets(); });
+    document.getElementById('page-next')?.addEventListener('click', () => { state.currentPage = Math.min(state.totalPages, state.currentPage + 1); refreshTickets(); });
+    document.getElementById('page-last')?.addEventListener('click', () => { state.currentPage = state.totalPages; refreshTickets(); });
+    document.querySelectorAll('.page-num-btn').forEach((btn) => {
+      btn.addEventListener('click', () => { state.currentPage = Number(btn.dataset.page); refreshTickets(); });
+    });
   }
-
-  el.innerHTML = `
-    <button type="button" class="ghost small-button" id="page-first" ${currentPage <= 1 ? 'disabled' : ''} title="First page">«</button>
-    <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
-    ${buildPageNumbers(currentPage, totalPages)}
-    <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
-    <button type="button" class="ghost small-button" id="page-last" ${currentPage >= totalPages ? 'disabled' : ''} title="Last page">»</button>
-    ${countInfo}
-  `;
-  document.getElementById('page-first')?.addEventListener('click', () => { state.currentPage = 1; refreshTickets(); });
-  document.getElementById('page-prev')?.addEventListener('click', () => { state.currentPage = Math.max(1, state.currentPage - 1); refreshTickets(); });
-  document.getElementById('page-next')?.addEventListener('click', () => { state.currentPage = Math.min(state.totalPages, state.currentPage + 1); refreshTickets(); });
-  document.getElementById('page-last')?.addEventListener('click', () => { state.currentPage = state.totalPages; refreshTickets(); });
-  document.querySelectorAll('.page-num-btn').forEach((btn) => {
-    btn.addEventListener('click', () => { state.currentPage = Number(btn.dataset.page); refreshTickets(); });
+  document.getElementById('per-page-select')?.addEventListener('change', (e) => {
+    state.perPage = Number(e.target.value);
+    state.currentPage = 1;
+    refreshTickets();
   });
 }
 
