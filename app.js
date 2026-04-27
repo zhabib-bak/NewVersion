@@ -66,6 +66,7 @@ const elements = {
   tabPanels: document.querySelectorAll(".tab-panel"),
   ticketDetail: document.querySelector("#ticket-detail"),
   closeDetail: document.querySelector("#close-detail"),
+  deleteTicketBtn: document.querySelector("#delete-ticket"),
   detailTitle: document.querySelector("#detail-title"),
   detailDescription: document.querySelector("#detail-description"),
   detailJdTicketNumber: document.querySelector("#detail-jd-ticket-number"),
@@ -166,6 +167,7 @@ function bindEvents() {
   elements.ticketForm.addEventListener("submit", saveTicket);
   elements.resetForm.addEventListener("click", resetTicketForm);
   elements.closeDetail.addEventListener("click", closeTicketDetail);
+  elements.deleteTicketBtn?.addEventListener("click", deleteTicket);
   elements.postComment.addEventListener("click", postComment);
   document.querySelectorAll("[data-template]").forEach((button) => {
     button.addEventListener("click", () => {
@@ -816,6 +818,9 @@ async function openTicketDetail(id) {
 function renderTicketDetail() {
   const ticket = state.selectedTicket;
   if (!ticket) return;
+  const role = state.currentUser?.role;
+  const canDelete = role === "manager" || role === "admin";
+  if (elements.deleteTicketBtn) elements.deleteTicketBtn.hidden = !canDelete;
   elements.detailTitle.textContent = `Ticket ${ticket.jd_ticket_number}`;
   elements.detailDescription.textContent = ticket.description;
   elements.detailJdTicketNumber.textContent = ticket.jd_ticket_number;
@@ -1695,6 +1700,23 @@ function closeTicketDetail(options = {}) {
   elements.commentsList.innerHTML = "";
   if (!preserveHistory && window.location.hash.startsWith("#ticket-")) {
     history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
+}
+
+async function deleteTicket() {
+  const ticket = state.selectedTicket;
+  if (!ticket) return;
+  const confirmed = window.confirm(
+    `Delete ticket ${ticket.jd_ticket_number}?\n\n"${ticket.description?.slice(0, 80)}"\n\nThis action cannot be undone.`
+  );
+  if (!confirmed) return;
+  try {
+    await apiFetch(`/api/tickets/${ticket.id}`, { method: "DELETE" });
+    closeTicketDetail();
+    await Promise.all([refreshTickets(), refreshDashboard()]);
+    showMessage(`Ticket ${ticket.jd_ticket_number} deleted.`);
+  } catch (error) {
+    showMessage(error.message, true);
   }
 }
 

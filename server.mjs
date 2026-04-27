@@ -1796,7 +1796,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'DELETE' && url.pathname.startsWith('/api/tickets/')) {
-      assertRole(auth, 'admin');
+      assertRole(auth, 'manager');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
       const exists = stmtTickets.byId.get(id);
