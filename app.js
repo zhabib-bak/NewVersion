@@ -157,11 +157,13 @@ function bindEvents() {
     state.currentPage = 1;
     refreshTickets();
   }, 220));
-  elements.clearFilters.addEventListener("click", () => {
+  const clearFiltersAction = () => {
     elements.filtersForm.reset();
     state.currentPage = 1;
     refreshTickets();
-  });
+  };
+  elements.clearFilters.addEventListener("click", clearFiltersAction);
+  document.getElementById('clear-filters-banner')?.addEventListener('click', clearFiltersAction);
   elements.saveView.addEventListener("click", saveView);
   elements.exportCsv.addEventListener("click", exportCsv);
   elements.ticketForm.addEventListener("submit", saveTicket);
@@ -498,11 +500,27 @@ function renderTabs() {
   elements.tabPanels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${state.activeTab}`));
 }
 
+function hasActiveFilters() {
+  for (const [, v] of new FormData(elements.filtersForm).entries()) {
+    if (v && String(v).trim()) return true;
+  }
+  return false;
+}
+
+function updateActiveFiltersBanner() {
+  const banner = document.getElementById('active-filters-banner');
+  if (!banner) return;
+  const active = hasActiveFilters();
+  banner.hidden = !active;
+  elements.clearFilters.classList.toggle('filter-active', active);
+}
+
 function renderTickets() {
   const { currentPage, totalTickets, tickets } = state;
   const from = totalTickets === 0 ? 0 : (currentPage - 1) * 50 + 1;
   const to = Math.min(currentPage * 50, totalTickets);
   elements.ticketCount.textContent = totalTickets === 0 ? "0 tickets" : `Showing ${from}–${to} of ${totalTickets} tickets`;
+  updateActiveFiltersBanner();
   elements.ticketsTableBody.innerHTML = state.tickets
     .map(
       (ticket) => `
@@ -575,19 +593,52 @@ function renderKanban() {
   });
 }
 
+function buildPageNumbers(current, total) {
+  const pages = [];
+  if (total <= 7) {
+    for (let i = 1; i <= total; i++) pages.push(i);
+  } else {
+    pages.push(1);
+    if (current > 3) pages.push('…');
+    for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) pages.push(i);
+    if (current < total - 2) pages.push('…');
+    pages.push(total);
+  }
+  return pages.map((p) =>
+    p === '…'
+      ? `<span class="pagination-ellipsis">…</span>`
+      : `<button type="button" class="ghost small-button page-num-btn${p === current ? ' pg-current' : ''}" data-page="${p}">${p}</button>`
+  ).join('');
+}
+
 function renderPagination() {
   const el = document.getElementById('pagination-controls');
   if (!el) return;
-  const { currentPage, totalPages, totalTickets, tickets } = state;
+  const { currentPage, totalPages, totalTickets } = state;
   const from = totalTickets === 0 ? 0 : (currentPage - 1) * 50 + 1;
   const to = Math.min(currentPage * 50, totalTickets);
-  el.innerHTML = totalPages <= 1 ? '' : `
-    <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>← Prev</button>
-    <span class="pagination-info">Page ${currentPage} of ${totalPages} &nbsp;·&nbsp; ${from}–${to} of ${totalTickets} tickets</span>
-    <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next →</button>
+  const countInfo = `<span class="pagination-info">${totalTickets === 0 ? '0 tickets' : `${from}–${to} of ${totalTickets} ticket${totalTickets !== 1 ? 's' : ''}`}</span>`;
+
+  if (totalPages <= 1) {
+    el.innerHTML = countInfo;
+    return;
+  }
+
+  el.innerHTML = `
+    <button type="button" class="ghost small-button" id="page-first" ${currentPage <= 1 ? 'disabled' : ''} title="First page">«</button>
+    <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
+    ${buildPageNumbers(currentPage, totalPages)}
+    <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
+    <button type="button" class="ghost small-button" id="page-last" ${currentPage >= totalPages ? 'disabled' : ''} title="Last page">»</button>
+    ${countInfo}
   `;
+  document.getElementById('page-first')?.addEventListener('click', () => { state.currentPage = 1; refreshTickets(); });
   document.getElementById('page-prev')?.addEventListener('click', () => { state.currentPage = Math.max(1, state.currentPage - 1); refreshTickets(); });
   document.getElementById('page-next')?.addEventListener('click', () => { state.currentPage = Math.min(state.totalPages, state.currentPage + 1); refreshTickets(); });
+  document.getElementById('page-last')?.addEventListener('click', () => { state.currentPage = state.totalPages; refreshTickets(); });
+  document.querySelectorAll('.page-num-btn').forEach((btn) => {
+    btn.addEventListener('click', () => { state.currentPage = Number(btn.dataset.page); refreshTickets(); });
+  });
 }
 
 async function updateTicketStatus(ticket, targetStatus) {

@@ -640,15 +640,38 @@ tr.import-row-warning { background: rgba(255,179,71,.03); }
 
 /* ─── END IMPORT MODAL ──────────────────────────────────────────────────────── */
 
+/* Active filters banner */
+.active-filters-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  background: rgba(255, 179, 71, 0.1);
+  border: 1px solid rgba(255, 179, 71, 0.35);
+  border-radius: 10px;
+  font-size: 0.88rem;
+  color: var(--warning, #ffb347);
+  margin-bottom: 10px;
+}
+.active-filters-banner button { font-size: 0.82rem; padding: 3px 10px; }
+button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,179,71,.4); }
+
+/* Pagination */
 .pagination-controls {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 6px;
   padding: 14px 0 4px;
+  flex-wrap: wrap;
 }
-.pagination-info { color: var(--muted); font-size: 0.88rem; }
-#page-prev:disabled, #page-next:disabled { opacity: 0.35; cursor: default; }
+.pagination-info { color: var(--muted); font-size: 0.88rem; margin-left: 8px; }
+.pagination-ellipsis { color: var(--muted); padding: 0 2px; font-size: 0.9rem; }
+.page-num-btn { min-width: 32px; padding: 4px 8px; font-size: 0.84rem; }
+.page-num-btn.pg-current { background: rgba(99,179,237,0.18); color: var(--accent); border-color: rgba(99,179,237,0.4); font-weight: 600; }
+#page-prev:disabled, #page-next:disabled,
+#page-first:disabled, #page-last:disabled { opacity: 0.35; cursor: default; }
 
 .attachments-section { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--panel-border); }
 .attachment-item {
