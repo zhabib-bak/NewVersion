@@ -351,7 +351,6 @@
             <p class="eyebrow">Ticket Detail</p>
             <h3 id="detail-title">Ticket</h3>
           </div>
-          <button type="button" id="delete-ticket" class="ghost" style="color:var(--danger)" hidden>Delete</button>
           <button type="button" id="close-detail" class="ghost">Close</button>
         </div>
 
@@ -398,6 +397,17 @@
                   <span class="muted">Requires manager/admin role with valid workflow transition.</span>
                 </div>
               </form>
+            </div>
+
+            <div id="delete-ticket-zone" class="danger-zone" hidden>
+              <p class="eyebrow" style="color:var(--danger)">Danger zone</p>
+              <div class="danger-zone-row">
+                <div>
+                  <strong>Delete this ticket</strong>
+                  <p class="muted">Permanently removes the ticket and all its comments. This cannot be undone.</p>
+                </div>
+                <button type="button" id="delete-ticket" class="btn-danger">Delete ticket</button>
+              </div>
             </div>
           </article>
 

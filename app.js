@@ -871,7 +871,8 @@ function renderTicketDetail() {
   if (!ticket) return;
   const role = state.currentUser?.role;
   const canDelete = role === "manager" || role === "admin";
-  if (elements.deleteTicketBtn) elements.deleteTicketBtn.hidden = !canDelete;
+  const deleteZone = document.getElementById('delete-ticket-zone');
+  if (deleteZone) deleteZone.hidden = !canDelete;
   elements.detailTitle.textContent = `Ticket ${ticket.jd_ticket_number}`;
   elements.detailDescription.textContent = ticket.description;
   elements.detailJdTicketNumber.textContent = ticket.jd_ticket_number;
@@ -1622,7 +1623,10 @@ function showImportPreview() {
       <tr class="${rowClass}">
         <td>${item.index}</td>
         <td>${statusCell}</td>
-        ${previewFields.map((f) => `<td>${escapeHtml(String(item.row[f] || ""))}</td>`).join("")}
+        ${previewFields.map((f) => {
+          const v = item.row[f];
+          return v ? `<td>${escapeHtml(String(v))}</td>` : `<td><span class="muted">—</span></td>`;
+        }).join("")}
         <td>${notesCell}</td>
       </tr>
     `;
