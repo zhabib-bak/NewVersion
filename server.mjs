@@ -18,7 +18,9 @@ const LEGACY_DB_PATH = join(ROOT, 'tickets.db');
 const SESSION_DURATION_MS = Number(process.env.SESSION_DURATION_HOURS || 12) * 60 * 60 * 1000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 const DEFAULT_SEED_PASSWORD = process.env.TICKET_APP_DEFAULT_PASSWORD || 'ChangeMe!2026';
-const SEED_FORCE_RESET = process.env.SEED_FORCE_RESET !== 'false';
+// Force reset when using the insecure default password; skip if operator set a real one
+const SEED_FORCE_RESET = process.env.SEED_FORCE_RESET === 'true' ||
+  (process.env.SEED_FORCE_RESET !== 'false' && DEFAULT_SEED_PASSWORD === 'ChangeMe!2026');
 const WEBHOOK_TIMEOUT_MS = Number(process.env.WEBHOOK_TIMEOUT_MS || 5000);
 const WEBHOOK_ALLOWLIST = (process.env.WEBHOOK_ALLOWLIST || '')
   .split(',')
