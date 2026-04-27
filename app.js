@@ -1218,8 +1218,8 @@ const IMPORT_FIELDS = [
   { key: "status", label: "Status", required: false, defaultValue: "Open" },
   { key: "assignee", label: "Assignee", required: true },
   { key: "manager", label: "Manager", required: true },
-  { key: "date_opening", label: "Date Opened (YYYY-MM-DD)", required: true },
-  { key: "date_closed", label: "Date Closed (YYYY-MM-DD)", required: false },
+  { key: "date_opening", label: "Date Opened (DD/MM/YYYY)", required: true },
+  { key: "date_closed", label: "Date Closed (DD/MM/YYYY)", required: false },
   { key: "updates_comments", label: "Initial Note", required: false }
 ];
 
@@ -1298,8 +1298,8 @@ function validateImportRow(row, meta) {
   if (!row.category) errors.push("Category is required");
   if (!row.priority) errors.push("Priority is required");
   if (!row.date_opening) errors.push("Date opened is required");
-  else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date_opening)) errors.push("Date opened must be YYYY-MM-DD");
-  if (row.date_closed && !/^\d{4}-\d{2}-\d{2}$/.test(row.date_closed)) errors.push("Date closed must be YYYY-MM-DD");
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date_opening)) errors.push("Date opened must be DD/MM/YYYY or M/D/YYYY");
+  if (row.date_closed && !/^\d{4}-\d{2}-\d{2}$/.test(row.date_closed)) errors.push("Date closed must be DD/MM/YYYY or M/D/YYYY");
   return errors;
 }
 
