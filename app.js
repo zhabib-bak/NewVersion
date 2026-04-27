@@ -9,6 +9,7 @@ const state = {
   webhooks: [],
   auditEvents: [],
   openedPeriod: "day",
+  closedPeriod: "day",
   selectedTicket: null,
   activeTab: "tickets",
   draggingTicketId: null,
@@ -56,6 +57,8 @@ const elements = {
   managerChart: document.querySelector("#manager-chart"),
   throughputChart: document.querySelector("#throughput-chart"),
   agingBucketsChart: document.querySelector("#aging-buckets-chart"),
+  statusBreakdownChart: document.querySelector("#status-breakdown-chart"),
+  weeklyFlowChart: document.querySelector("#weekly-flow-chart"),
   summaryTemplate: document.querySelector("#summary-card-template"),
   periodButtons: document.querySelectorAll(".period-button"),
   tabButtons: document.querySelectorAll(".tab-button"),
@@ -186,6 +189,13 @@ function bindEvents() {
     button.addEventListener("click", () => {
       state.openedPeriod = button.dataset.period;
       elements.periodButtons.forEach((item) => item.classList.toggle("active", item === button));
+      renderDashboard();
+    });
+  });
+  document.querySelectorAll(".closed-period-button").forEach(button => {
+    button.addEventListener("click", () => {
+      state.closedPeriod = button.dataset.period;
+      document.querySelectorAll(".closed-period-button").forEach(b => b.classList.toggle("active", b === button));
       renderDashboard();
     });
   });
@@ -590,31 +600,51 @@ async function updateTicketStatus(ticket, targetStatus) {
 
 function renderDashboard() {
   if (!state.dashboard) return;
+  const t = state.dashboard.totals;
   const cards = [
-    { label: "Total tickets", value: state.dashboard.totals.total },
-    { label: "Open", value: state.dashboard.totals.open },
-    { label: "Closed", value: state.dashboard.totals.closed },
-    { label: "Avg aging", value: `${state.dashboard.totals.avgAging} days` },
-    { label: "Avg lead time", value: `${state.dashboard.totals.avgLeadTime} days` },
-    { label: "Reopen rate", value: `${state.dashboard.totals.reopenRate}%` },
-    { label: "SLA breached open", value: state.dashboard.totals.breachedOpen }
+    { label: "Total tickets", value: t.total, color: "neutral" },
+    { label: "Open", value: t.open, color: t.open > 10 ? "warning" : "success" },
+    { label: "In Progress", value: t.inProgress, color: "brand" },
+    { label: "Blocked", value: t.blocked, color: t.blocked > 0 ? "danger" : "success" },
+    { label: "P1 open", value: t.p1Open, color: t.p1Open > 0 ? "danger" : "success" },
+    { label: "Closed", value: t.closed, color: "success" },
+    { label: "Opened this week", value: t.openedThisWeek, color: "neutral" },
+    { label: "Closed this week", value: t.closedThisWeek, color: t.closedThisWeek >= t.openedThisWeek ? "success" : "warning" },
+    { label: "Resolution rate", value: `${t.resolutionRate}%`, color: t.resolutionRate >= 70 ? "success" : t.resolutionRate >= 40 ? "warning" : "danger" },
+    { label: "Avg aging", value: `${t.avgAging}d`, color: t.avgAging > 10 ? "danger" : t.avgAging > 5 ? "warning" : "success" },
+    { label: "Avg lead time", value: `${t.avgLeadTime}d`, color: "neutral" },
+    { label: "SLA breached", value: t.breachedOpen, color: t.breachedOpen > 0 ? "danger" : "success" },
   ];
-  elements.summaryCards.innerHTML = "";
-  cards.forEach((card) => {
-    const fragment = elements.summaryTemplate.content.cloneNode(true);
-    fragment.querySelector(".summary-label").textContent = card.label;
-    fragment.querySelector(".summary-value").textContent = card.value;
-    elements.summaryCards.appendChild(fragment);
-  });
+  elements.summaryCards.innerHTML = cards.map(card => `
+    <article class="summary-card summary-card--${card.color}">
+      <span class="summary-label">${escapeHtml(card.label)}</span>
+      <strong class="summary-value">${escapeHtml(String(card.value))}</strong>
+    </article>`).join("");
 
-  renderVerticalBarChart(elements.openedTrendChart, state.dashboard[`openedBy${capitalize(state.openedPeriod)}`], "Tickets");
-  renderVerticalBarChart(elements.closedTrendChart, state.dashboard.closedByDay, "Tickets");
-  renderHorizontalBars(elements.priorityChart, state.dashboard.openByPriority);
+  renderVerticalBarChart(
+    elements.openedTrendChart,
+    state.dashboard[`openedBy${capitalize(state.openedPeriod)}`],
+    "Opened"
+  );
+  renderVerticalBarChart(
+    elements.closedTrendChart,
+    state.dashboard[`closedBy${capitalize(state.closedPeriod)}`],
+    "Closed"
+  );
+  renderHorizontalBars(elements.priorityChart, state.dashboard.openByPriority, {
+    colorMap: { "P1 high": "danger", "P2 medium": "warning", "P3 low": "neutral" }
+  });
   renderHorizontalBars(elements.assigneeChart, state.dashboard.openByAssignee);
   renderHorizontalBars(elements.categoryChart, state.dashboard.openByCategory);
   renderHorizontalBars(elements.managerChart, state.dashboard.openByManager);
   renderVerticalBarChart(elements.throughputChart, state.dashboard.throughputWeekly, "Closed");
-  renderHorizontalBars(elements.agingBucketsChart, state.dashboard.backlogAgingBuckets);
+  renderHorizontalBars(elements.agingBucketsChart, state.dashboard.backlogAgingBuckets, {
+    colorMap: { "0-2 days": "success", "3-7 days": "warning", "8-14 days": "danger", "15+ days": "danger" }
+  });
+  renderHorizontalBars(elements.statusBreakdownChart, state.dashboard.statusBreakdown, {
+    colorMap: { "Open": "neutral", "In Progress": "brand", "Blocked": "danger", "Closed": "success" }
+  });
+  renderWeeklyFlowChart(elements.weeklyFlowChart, state.dashboard.weeklyFlow);
 }
 
 function renderVerticalBarChart(container, data, unitLabel) {
@@ -642,28 +672,48 @@ function renderVerticalBarChart(container, data, unitLabel) {
   `;
 }
 
-function renderHorizontalBars(container, data) {
+function renderHorizontalBars(container, data, opts = {}) {
   const items = data && data.length ? data : [];
   if (!items.length) {
     container.innerHTML = `<p class="empty-state">No data available.</p>`;
     return;
   }
-  const max = Math.max(...items.map((item) => item.value), 1);
+  const max = Math.max(...items.map(item => item.value), 1);
+  const { colorMap = {} } = opts;
   container.innerHTML = `
     <div class="h-chart">
-      ${items
-        .map(
-          (item) => `
-            <div class="h-row">
-              <span class="h-label">${escapeHtml(item.label)}</span>
-              <div class="h-track"><div class="h-fill" style="width:${Math.max(item.value ? 10 : 0, (item.value / max) * 100)}%"></div></div>
-              <span class="h-value">${item.value}</span>
-            </div>
-          `
-        )
-        .join("")}
+      ${items.map(item => {
+        const colorClass = colorMap[item.label] || "brand";
+        return `
+          <div class="h-row">
+            <span class="h-label">${escapeHtml(item.label)}</span>
+            <div class="h-track"><div class="h-fill h-fill--${colorClass}" style="width:${Math.max(item.value ? 8 : 0, (item.value / max) * 100)}%"></div></div>
+            <span class="h-value">${item.value}</span>
+          </div>`;
+      }).join("")}
+    </div>`;
+}
+
+function renderWeeklyFlowChart(container, data) {
+  if (!container) return;
+  const items = (data || []);
+  if (!items.length) { container.innerHTML = `<p class="empty-state">No data.</p>`; return; }
+  const max = Math.max(...items.flatMap(d => [d.opened, d.closed]), 1);
+  container.innerHTML = `
+    <div class="v-chart">
+      ${items.map(item => `
+        <div class="v-bar-group">
+          <div class="v-bar-track v-bar-track--dual">
+            <div class="v-bar-fill v-bar-fill--opened" style="height:${Math.max(item.opened ? 8 : 0, (item.opened / max) * 100)}%" title="Opened: ${item.opened}"></div>
+            <div class="v-bar-fill v-bar-fill--closed" style="height:${Math.max(item.closed ? 8 : 0, (item.closed / max) * 100)}%" title="Closed: ${item.closed}"></div>
+          </div>
+          <span class="v-bar-label">${escapeHtml(item.label)}</span>
+        </div>`).join("")}
     </div>
-  `;
+    <div class="chart-legend">
+      <span class="legend-dot legend-dot--opened"></span><span class="muted">Opened</span>
+      <span class="legend-dot legend-dot--closed"></span><span class="muted">Closed</span>
+    </div>`;
 }
 
 async function exportCsv() {
