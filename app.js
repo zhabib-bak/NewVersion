@@ -11,7 +11,7 @@ const state = {
   openedPeriod: "day",
   closedPeriod: "day",
   selectedTicket: null,
-  activeTab: "tickets",
+  activeTab: "entry",
   draggingTicketId: null,
   passwordResetRequired: false,
   webhookDeliveries: [],
@@ -327,16 +327,24 @@ async function loadBootstrap() {
 function applyRoleVisibility() {
   const isManagerOrAdmin = state.currentUser && (state.currentUser.role === "manager" || state.currentUser.role === "admin");
   const isAdmin = state.currentUser && state.currentUser.role === "admin";
-  const entryTab = Array.from(elements.tabButtons).find((button) => button.dataset.tab === "entry");
-  if (entryTab) entryTab.style.display = isManagerOrAdmin ? "" : "none";
-  elements.ticketForm.closest(".panel").style.display = isManagerOrAdmin ? "" : "none";
+
+  // Import CSV button and Import History panel — managers/admins only
+  const importBtn = document.getElementById("import-csv");
+  if (importBtn) importBtn.hidden = !isManagerOrAdmin;
+  const importHistoryPanel = document.getElementById("import-history-panel");
+  if (importHistoryPanel) importHistoryPanel.hidden = !isManagerOrAdmin;
+
+  // Manager controls inside ticket detail
   elements.managerEditForm.closest(".manager-panel").style.display = isManagerOrAdmin ? "" : "none";
+
+  // Roles tab — managers/admins only
   const rolesTab = Array.from(elements.tabButtons).find((button) => button.dataset.tab === "roles");
   if (rolesTab) rolesTab.style.display = isManagerOrAdmin ? "" : "none";
-  if ((state.activeTab === "roles" || state.activeTab === "entry") && !isManagerOrAdmin) {
-    state.activeTab = "tickets";
+  if (state.activeTab === "roles" && !isManagerOrAdmin) {
+    state.activeTab = "entry";
     renderTabs();
   }
+
   elements.userForm.style.display = isAdmin ? "" : "none";
   elements.webhookForm.style.display = isAdmin ? "" : "none";
 }
