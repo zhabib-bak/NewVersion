@@ -1,0 +1,36 @@
+jd_ticket_number,description,category,priority,status,assignee,manager,date_opening,date_closed
+6914001,WMS location sync failure causing stock discrepancies,WMS,P1 high,Closed,Chandra,Adriano,2026-03-04,2026-03-08
+6914002,Inbound shipment missing pallet labels on receiving dock,Inbound,P2 medium,Closed,Nicoleta,Adriano,2026-03-06,2026-03-10
+6914003,Shuttle route optimisation not saving configuration,Shuttle,P2 medium,Closed,Loan,Zacarias,2026-03-11,2026-03-15
+6914004,PIN reader on gate 4 intermittently rejecting valid badges,PIN,P1 high,Closed,Samuel,Adriano,2026-03-12,2026-03-17
+6914005,Outbound manifest export producing empty CSV files,Outbound,P2 medium,Closed,Mohamad,Zacarias,2026-03-13,2026-03-18
+6914006,SCADA alarm panel showing incorrect sensor readings zone B,Scada,P1 high,Closed,Ana,Adriano,2026-03-18,2026-03-22
+6914007,Inventory cycle count report missing items from aisle 7,Inventory,P2 medium,Closed,Andrea,Zacarias,2026-03-19,2026-03-24
+6914008,UCS conveyor belt speed inconsistency after maintenance,UCS,P3 low,Closed,Alexandra,Adriano,2026-03-20,2026-03-25
+6914009,Toting bin assignment algorithm sending to wrong zone,Toting,P2 medium,Closed,Radulesco,Zacarias,2026-03-24,2026-03-29
+6914010,Change request: add bulk status update to backoffice panel,change request,P3 low,Closed,Oliwia,Adriano,2026-03-25,2026-03-31
+6914011,WMS pick path recalculation timeout on large orders,WMS,P1 high,Closed,Madalin,Zacarias,2026-03-26,2026-04-01
+6914012,Inbound EDI message parsing error for supplier 8821,Inbound,P2 medium,Closed,Chandra,Adriano,2026-03-27,2026-04-02
+6914013,Shuttle arm collision detection false positive halting line,Shuttle,P1 high,Closed,Nicoleta,Zacarias,2026-03-31,2026-04-05
+6914014,Outbound loading bay door sensor not triggering dock alert,Outbound,P2 medium,Closed,Loan,Adriano,2026-04-01,2026-04-07
+6914015,PIN system password expiry not sending email notification,PIN,P3 low,Closed,Samuel,Zacarias,2026-04-02,2026-04-08
+6914016,Inventory replenishment trigger firing twice for same SKU,Inventory,P2 medium,Closed,Mohamad,Adriano,2026-04-07,2026-04-12
+6914017,SCADA data historian not archiving readings after midnight,Scada,P2 medium,Closed,Ana,Zacarias,2026-04-08,2026-04-14
+6914018,UCS label printer jam on station 3 — firmware version issue,UCS,P3 low,Closed,Andrea,Adriano,2026-04-09,2026-04-15
+6914019,Toting zone overflow buffer capacity exceeded during peak,Toting,P1 high,Blocked,Alexandra,Zacarias,2026-04-14,
+6914020,WMS negative stock level appearing on putaway confirmation,WMS,P2 medium,In Progress,Radulesco,Adriano,2026-04-15,
+6914021,Inbound dock scheduling overlap causing forklift conflicts,Inbound,P2 medium,In Progress,Oliwia,Zacarias,2026-04-16,
+6914022,Change request: integrate carrier tracking API into portal,change request,P3 low,Open,Madalin,Adriano,2026-04-16,
+6914023,Shuttle E-stop triggered by software fault — production down,Shuttle,P1 high,In Progress,Chandra,Zacarias,2026-04-21,
+6914024,Outbound shipment weight tolerance exceeded on carrier check,Outbound,P2 medium,Open,Nicoleta,Adriano,2026-04-21,
+6914025,PIN biometric enrolment failing for 3 new operators,PIN,P2 medium,Blocked,Loan,Zacarias,2026-04-22,
+6914026,Inventory audit discrepancy of 14 units in Zone C row 12,Inventory,P1 high,Open,Samuel,Adriano,2026-04-22,
+6914027,SCADA pressure sensor calibration drift in cooling system,Scada,P2 medium,Open,Mohamad,Zacarias,2026-04-23,
+6914028,UCS sortation lane divert error — parcels going to wrong hub,UCS,P1 high,In Progress,Ana,Adriano,2026-04-24,
+6914029,Toting induction speed reduced after software patch v4.2,Toting,P2 medium,Open,Andrea,Zacarias,2026-04-24,
+6914030,WMS reservation deadlock on concurrent multi-order pick,WMS,P1 high,Blocked,Alexandra,Adriano,2026-04-25,
+6914031,Inbound ASN file format change breaking automated parser,Inbound,P2 medium,Open,Radulesco,Zacarias,2026-04-25,
+6914032,Change request: export dashboard KPIs to PDF,change request,P3 low,Open,Oliwia,Adriano,2026-04-26,
+6914033,Shuttle maintenance window: firmware upgrade required,Shuttle,P2 medium,Open,Madalin,Zacarias,2026-04-26,
+6914034,Outbound label template misaligned after printer driver update,Outbound,P3 low,Open,Chandra,Adriano,2026-04-26,
+6914035,SCADA network timeout causing HMI disconnects on floor 2,Scada,P1 high,Open,Nicoleta,Zacarias,2026-04-27,
