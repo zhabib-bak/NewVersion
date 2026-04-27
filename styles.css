@@ -868,7 +868,7 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
 /* ─── KPI CARDS ROW ──────────────────────────────────────────────────────────── */
 .kpi-row {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(7, 1fr);
   gap: 14px;
   margin-bottom: 20px;
 }
@@ -1021,6 +1021,78 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
 .tool-card-body { flex: 1; }
 .tool-card-body strong { font-size: .9rem; display: block; margin-bottom: 3px; }
 .tool-card-body .muted { font-size: .78rem; margin: 0; }
+
+/* ─── AT RISK PANEL ──────────────────────────────────────────────────────────── */
+.at-risk-panel { margin-bottom: 16px; border-left: 3px solid var(--danger); }
+.at-risk-badge {
+  font-size: .72rem;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.ar-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.ar-table thead th {
+  text-align: left;
+  font-size: .7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--muted);
+  padding: 0 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.ar-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ar-table tbody tr:last-child td { border-bottom: none; }
+.ar-table tbody tr:hover { background: var(--surface-alt); }
+.ar-row--p1 td:first-child { border-left: 3px solid var(--danger); }
+.ar-row--blocked td:first-child { border-left: 3px solid var(--warning); }
+.ar-row--aged td:first-child { border-left: 3px solid var(--muted); }
+.ar-num { font-weight: 600; font-size: .85rem; white-space: nowrap; }
+.ar-desc { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ar-assignee { color: var(--muted); font-size: .8rem; white-space: nowrap; }
+.ar-flags { display: flex; gap: 5px; flex-wrap: wrap; }
+.ar-tag {
+  font-size: .68rem;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 4px;
+  white-space: nowrap;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+}
+.ar-tag--p1      { background: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); }
+.ar-tag--blocked { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+.ar-tag--aged    { background: var(--surface-alt); color: var(--muted); }
+
+/* ─── AUTO-REFRESH CONTROLS ──────────────────────────────────────────────────── */
+.autorefresh-label {
+  font-size: .75rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+.autorefresh-select {
+  font-size: .75rem;
+  padding: 3px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text);
+  cursor: pointer;
+}
+.autorefresh-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  display: inline-block;
+  animation: ar-pulse 2s ease-in-out infinite;
+}
+@keyframes ar-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .4; transform: scale(.75); }
+}
 
 /* ─── END DASHBOARD ENHANCEMENTS ─────────────────────────────────────────────── */
 

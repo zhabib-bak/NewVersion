@@ -22,7 +22,8 @@ const state = {
   totalPages: 1,
   totalTickets: 0,
   perPage: 50,
-  kanbanPages: {}
+  kanbanPages: {},
+  autoRefreshTimer: null
 };
 
 const elements = {
@@ -205,6 +206,23 @@ function bindEvents() {
     });
   });
   document.getElementById("refresh-dashboard")?.addEventListener("click", () => refreshDashboard());
+
+  const arSelect = document.getElementById('autorefresh-select');
+  const arDot = document.getElementById('autorefresh-dot');
+  if (arSelect) {
+    const saved = localStorage.getItem('autorefresh_interval');
+    if (saved !== null) arSelect.value = saved;
+    const applyAutoRefresh = () => {
+      clearInterval(state.autoRefreshTimer);
+      const secs = Number(arSelect.value);
+      localStorage.setItem('autorefresh_interval', secs);
+      if (arDot) arDot.hidden = secs === 0;
+      if (secs > 0) state.autoRefreshTimer = setInterval(() => refreshDashboard(), secs * 1000);
+    };
+    arSelect.addEventListener('change', applyAutoRefresh);
+    applyAutoRefresh();
+  }
+
   elements.tabButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeTab = button.dataset.tab;
@@ -748,11 +766,13 @@ function renderDashboard() {
   const kpiRow = document.getElementById('kpi-row');
   if (kpiRow) {
     const kpis = [
-      { label: 'Total',      value: t.total,      sub: 'All time',                                           color: 'neutral', icon: '≡' },
-      { label: 'Open',       value: t.open,        sub: t.open > 10 ? 'High volume' : 'Under control',       color: t.open > 10 ? 'warning' : 'success', icon: '○', filter: 'status=Open' },
-      { label: 'In Progress',value: t.inProgress,  sub: t.inProgress > 0 ? `${t.inProgress} active` : 'None active', color: 'brand', icon: '◑', filter: 'status=In Progress' },
-      { label: 'Blocked',    value: t.blocked,     sub: t.blocked > 0 ? 'Needs attention' : 'All clear',     color: t.blocked > 0 ? 'danger' : 'success', icon: '⊘', filter: 'status=Blocked' },
-      { label: 'P1 Open',    value: t.p1Open,      sub: t.p1Open > 0 ? 'Critical' : 'None critical',         color: t.p1Open > 0 ? 'danger' : 'success', icon: '▲', filter: 'priority=P1 high' },
+      { label: 'Total',       value: t.total,             sub: 'All time',                                                  color: 'neutral', icon: '≡' },
+      { label: 'Open',        value: t.open,              sub: t.open > 10 ? 'High volume' : 'Under control',               color: t.open > 10 ? 'warning' : 'success', icon: '○', filter: 'status=Open' },
+      { label: 'In Progress', value: t.inProgress,        sub: t.inProgress > 0 ? `${t.inProgress} active` : 'None active', color: 'brand', icon: '◑', filter: 'status=In Progress' },
+      { label: 'Blocked',     value: t.blocked,           sub: t.blocked > 0 ? 'Needs attention' : 'All clear',             color: t.blocked > 0 ? 'danger' : 'success', icon: '⊘', filter: 'status=Blocked' },
+      { label: 'P1 Open',     value: t.p1Open,            sub: t.p1Open > 0 ? 'Critical' : 'None critical',                 color: t.p1Open > 0 ? 'danger' : 'success', icon: '▲', filter: 'priority=P1 high' },
+      { label: 'Avg Lead Time',value: `${t.avgLeadTime}d`, sub: t.avgLeadTime <= 3 ? 'Fast resolution' : t.avgLeadTime <= 7 ? 'Moderate' : 'Review process', color: t.avgLeadTime <= 3 ? 'success' : t.avgLeadTime <= 7 ? 'warning' : 'danger', icon: '⏱' },
+      { label: 'Reopen Rate', value: `${t.reopenRate}%`,  sub: t.reopenRate <= 5 ? 'Quality is good' : t.reopenRate <= 15 ? 'Worth monitoring' : 'Quality issue', color: t.reopenRate <= 5 ? 'success' : t.reopenRate <= 15 ? 'warning' : 'danger', icon: '↺' },
     ];
     kpiRow.innerHTML = kpis.map(k => `
       <article class="kpi-card kpi-card--${k.color}${k.filter ? ' kpi-card--clickable' : ''}"${k.filter ? ` data-filter="${escapeHtml(k.filter)}"` : ''}>
@@ -771,6 +791,13 @@ function renderDashboard() {
       });
     });
   }
+
+  // At-risk panel
+  renderAtRisk(document.getElementById('at-risk-table'), d.atRisk);
+  const atRiskPanel = document.getElementById('at-risk-panel');
+  const atRiskCount = document.getElementById('at-risk-count');
+  if (atRiskPanel) atRiskPanel.hidden = !(d.atRisk && d.atRisk.length);
+  if (atRiskCount && d.atRisk) atRiskCount.textContent = `${d.atRisk.length} ticket${d.atRisk.length !== 1 ? 's' : ''}`;
 
   // Flow chart + delta badge
   renderSvgFlowChart(elements.weeklyFlowChart, d.weeklyFlow);
@@ -934,6 +961,39 @@ function renderActivityFeed(container, data) {
         </p>
       </div>
     </div>`).join('');
+}
+
+function renderAtRisk(container, data) {
+  if (!container) return;
+  const items = (data || []);
+  if (!items.length) { container.innerHTML = `<p class="empty-state">No at-risk tickets.</p>`; return; }
+
+  const riskClass = item => {
+    if (item.priority === 'P1 high') return 'ar-row--p1';
+    if (item.status === 'Blocked') return 'ar-row--blocked';
+    return 'ar-row--aged';
+  };
+  const riskLabel = item => {
+    const tags = [];
+    if (item.priority === 'P1 high') tags.push(`<span class="ar-tag ar-tag--p1">P1</span>`);
+    if (item.status === 'Blocked') tags.push(`<span class="ar-tag ar-tag--blocked">Blocked</span>`);
+    if (item.aging >= 10) tags.push(`<span class="ar-tag ar-tag--aged">${item.aging}d</span>`);
+    return tags.join('');
+  };
+
+  container.innerHTML = `
+    <table class="ar-table">
+      <thead><tr><th>Ticket</th><th>Description</th><th>Assignee</th><th>Status</th><th>Flags</th></tr></thead>
+      <tbody>${items.map(item => `
+        <tr class="${riskClass(item)}">
+          <td class="ar-num">#${escapeHtml(String(item.jd_ticket_number || item.id))}</td>
+          <td class="ar-desc">${escapeHtml((item.description || '').slice(0, 70))}${(item.description || '').length > 70 ? '…' : ''}</td>
+          <td class="ar-assignee">${escapeHtml(item.assignee || '—')}</td>
+          <td><span class="status-pill status-pill--${(item.status || '').toLowerCase().replace(/\s+/g, '-')}">${escapeHtml(item.status || '')}</span></td>
+          <td class="ar-flags">${riskLabel(item)}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
 }
 
 function renderVerticalBarChart(container, data, unitLabel) {
