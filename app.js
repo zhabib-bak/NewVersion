@@ -806,7 +806,7 @@ function renderDashboard() {
 
   // Comparison charts
   renderLeadTimeChart(document.getElementById('lead-time-chart'), d.leadTimeDistribution);
-  renderCategoryTrendChart(document.getElementById('category-trend-chart'), d.categoryTrend);
+  renderHorizontalBars(document.getElementById('category-trend-chart'), d.openByCategory);
   renderHorizontalBars(document.getElementById('closed-assignee-chart'), d.closedByAssignee);
 
   // Workload table
