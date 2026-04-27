@@ -16,6 +16,7 @@ const BACKUP_DIR = join(DATA_DIR, 'backups');
 const DB_PATH = join(DATA_DIR, 'tickets.db');
 const LEGACY_DB_PATH = join(ROOT, 'tickets.db');
 const SESSION_DURATION_MS = Number(process.env.SESSION_DURATION_HOURS || 12) * 60 * 60 * 1000;
+const REMEMBER_ME_DAYS = Number(process.env.REMEMBER_ME_DAYS || 30);
 const IS_PROD = process.env.NODE_ENV === 'production';
 const DEFAULT_SEED_PASSWORD = process.env.TICKET_APP_DEFAULT_PASSWORD || 'ChangeMe!2026';
 // Force reset when using the insecure default password; skip if operator set a real one
@@ -1257,11 +1258,14 @@ const server = createServer(async (request, response) => {
         stmtUsers.setSecret.run(hashPassword(password), 1, user.id);
       }
       const refreshedUser = stmtUsers.byId.get(user.id);
+      const remember = !!payload.remember;
       const sessionId = randomUUID();
       const csrf = randomBytes(24).toString('hex');
-      const expiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
+      const durationMs = remember ? REMEMBER_ME_DAYS * 24 * 3600 * 1000 : SESSION_DURATION_MS;
+      const expiresAt = new Date(Date.now() + durationMs).toISOString();
       stmtSessions.insert.run(sessionId, refreshedUser.id, csrf, expiresAt);
       logAudit('session', refreshedUser.id, 'login', refreshedUser.name, { ip });
+      const cookieMaxAge = remember ? REMEMBER_ME_DAYS * 24 * 3600 : null;
       sendJson(
         response,
         200,
@@ -1270,7 +1274,7 @@ const server = createServer(async (request, response) => {
           csrf_token: csrf,
           password_reset_required: Boolean(refreshedUser.password_reset_required)
         },
-        { 'Set-Cookie': buildSessionCookie(sessionId) }
+        { 'Set-Cookie': buildSessionCookie(sessionId, cookieMaxAge) }
       );
       return;
     }

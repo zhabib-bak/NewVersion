@@ -228,6 +228,12 @@ async function bootstrapAuth() {
 function showLogin() {
   elements.loginOverlay.hidden = false;
   elements.passwordResetOverlay.hidden = true;
+  const remembered = localStorage.getItem("remembered_user");
+  if (remembered && elements.loginName) {
+    elements.loginName.value = remembered;
+    const rememberBox = document.querySelector("#login-remember");
+    if (rememberBox) rememberBox.checked = true;
+  }
 }
 
 function showAppSession() {
@@ -239,9 +245,11 @@ function showAppSession() {
 
 async function login(event) {
   event.preventDefault();
+  const remember = document.querySelector("#login-remember")?.checked || false;
   const payload = {
     name: elements.loginName.value,
-    password: elements.loginPassword.value
+    password: elements.loginPassword.value,
+    remember
   };
   const response = await fetch("/api/auth/login", {
     method: "POST",
@@ -252,6 +260,11 @@ async function login(event) {
   if (!response.ok) {
     showMessage(data.error || "Error de acceso.", true);
     return;
+  }
+  if (remember) {
+    localStorage.setItem("remembered_user", payload.name);
+  } else {
+    localStorage.removeItem("remembered_user");
   }
   state.currentUser = data.user;
   state.csrfToken = data.csrf_token;
