@@ -952,24 +952,52 @@ function getDashboardData() {
       avgAging,
       avgLeadTime,
       reopenRate,
-      breachedOpen
+      breachedOpen,
+      inProgress: open.filter(t => t.status === 'In Progress').length,
+      blocked: open.filter(t => t.status === 'Blocked').length,
+      p1Open: open.filter(t => t.priority === 'P1 high').length,
+      openedThisWeek: all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= Date.now() - 7 * 86400000).length,
+      closedThisWeek: closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= Date.now() - 7 * 86400000).length,
+      resolutionRate: all.length ? Math.round(closed.length / all.length * 100) : 0,
     },
     openedByDay: aggregateByPeriod(all, 'date_opening', 'day'),
     openedByWeek: aggregateByPeriod(all, 'date_opening', 'week'),
     openedByMonth: aggregateByPeriod(all, 'date_opening', 'month'),
     closedByDay: aggregateByPeriod(closed, 'date_closed', 'day'),
     closedByWeek: aggregateByPeriod(closed, 'date_closed', 'week'),
+    closedByMonth: aggregateByPeriod(closed, 'date_closed', 'month'),
     throughputWeekly: aggregateByPeriod(closed, 'date_closed', 'week').slice(-12),
     openByPriority: countBy(open, 'priority'),
     openByAssignee: countBy(open, 'assignee'),
     openByCategory: countBy(open, 'category'),
     openByManager: countBy(open, 'manager'),
-    agingBuckets: [
+    backlogAgingBuckets: [
       { label: '0-2 days', value: open.filter((t) => t.aging <= 2).length },
       { label: '3-7 days', value: open.filter((t) => t.aging >= 3 && t.aging <= 7).length },
       { label: '8-14 days', value: open.filter((t) => t.aging >= 8 && t.aging <= 14).length },
       { label: '15+ days', value: open.filter((t) => t.aging >= 15).length }
-    ]
+    ],
+    statusBreakdown: [
+      { label: 'Open', value: all.filter(t => t.status === 'Open').length },
+      { label: 'In Progress', value: all.filter(t => t.status === 'In Progress').length },
+      { label: 'Blocked', value: all.filter(t => t.status === 'Blocked').length },
+      { label: 'Closed', value: closed.length }
+    ],
+    weeklyFlow: (() => {
+      const weeks = 8;
+      const result = [];
+      for (let i = weeks - 1; i >= 0; i--) {
+        const weekStart = Date.now() - (i + 1) * 7 * 86400000;
+        const weekEnd = Date.now() - i * 7 * 86400000;
+        const label = new Date(weekStart).toISOString().slice(5, 10);
+        result.push({
+          label,
+          opened: all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= weekStart && Date.parse(`${t.date_opening}T00:00:00Z`) < weekEnd).length,
+          closed: closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= weekStart && Date.parse(`${t.date_closed}T00:00:00Z`) < weekEnd).length
+        });
+      }
+      return result;
+    })(),
   };
 }
 
