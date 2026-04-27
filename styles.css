@@ -1115,6 +1115,35 @@ button.filter-active { color: var(--warning, #ffb347); border-color: rgba(255,17
   50% { opacity: .4; transform: scale(.75); }
 }
 
+/* ─── CATEGORY CHART ─────────────────────────────────────────────────────────── */
+.cat-chart { display: flex; flex-direction: column; gap: 10px; }
+.cat-row { display: flex; align-items: center; gap: 10px; }
+.cat-label { font-size: .8rem; min-width: 96px; max-width: 96px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-track { flex: 1; background: var(--border); border-radius: 6px; height: 10px; overflow: hidden; }
+.cat-bar { height: 100%; border-radius: 6px; transition: width .4s ease; }
+.cat-value { min-width: 24px; text-align: right; font-size: .88rem; font-variant-numeric: tabular-nums; }
+
+/* ─── RESOLUTION HEALTH GRID ─────────────────────────────────────────────────── */
+.res-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.res-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 10px;
+  border-radius: 10px;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  text-align: center;
+}
+.res-icon { font-size: 1.1rem; opacity: .7; line-height: 1; }
+.res-value { font-size: 1.5rem; font-weight: 700; line-height: 1; letter-spacing: -.02em; }
+.res-label { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.res-stat--success .res-value { color: var(--success); }
+.res-stat--warning .res-value { color: var(--warning); }
+.res-stat--danger  .res-value { color: var(--danger); }
+.res-stat--neutral .res-value { color: var(--text); }
+
 /* ─── END DASHBOARD ENHANCEMENTS ─────────────────────────────────────────────── */
 
 @media (max-width: 1500px) {

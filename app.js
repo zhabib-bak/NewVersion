@@ -806,8 +806,8 @@ function renderDashboard() {
 
   // Comparison charts
   renderLeadTimeChart(document.getElementById('lead-time-chart'), d.leadTimeDistribution);
-  renderHorizontalBars(document.getElementById('category-trend-chart'), d.openByCategory);
-  renderHorizontalBars(document.getElementById('closed-assignee-chart'), d.closedByAssignee);
+  renderCategoryChart(document.getElementById('category-trend-chart'), d.openByCategory);
+  renderResolutionSummary(document.getElementById('closed-assignee-chart'), d.totals);
 
   // Workload table
   renderWorkloadTable(document.getElementById('workload-table'), d.workload);
@@ -958,6 +958,42 @@ function renderStatusRing(container, data) {
     </div>`;
 }
 
+function renderCategoryChart(container, data) {
+  if (!container) return;
+  const items = (data || []);
+  if (!items.length) { container.innerHTML = `<p class="empty-state">No open tickets.</p>`; return; }
+  const max = Math.max(...items.map(d => d.value), 1);
+  const palette = ['#32b48d','#ffb347','#ff6b5f','#6c8db7','#a78bfa','#38bdf8','#fb923c','#34d399'];
+  container.innerHTML = `<div class="cat-chart">${items.map((item, i) => {
+    const pct = Math.max(item.value ? 8 : 0, Math.round(item.value / max * 100));
+    const color = palette[i % palette.length];
+    return `<div class="cat-row">
+      <span class="cat-label" title="${escapeHtml(item.label)}">${escapeHtml(item.label)}</span>
+      <div class="cat-track"><div class="cat-bar" style="width:${pct}%;background:${color}"></div></div>
+      <strong class="cat-value" style="color:${color}">${item.value}</strong>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function renderResolutionSummary(container, totals) {
+  if (!container || !totals) return;
+  const col = (v, good, warn) => v <= good ? 'success' : v <= warn ? 'warning' : 'danger';
+  const stats = [
+    { label: 'Total closed',     value: totals.closed,           icon: '●', color: 'success' },
+    { label: 'Avg lead time',    value: `${totals.avgLeadTime}d`, icon: '⏱', color: col(totals.avgLeadTime, 3, 7) },
+    { label: 'Resolution rate',  value: `${totals.resolutionRate}%`, icon: '%', color: totals.resolutionRate >= 70 ? 'success' : totals.resolutionRate >= 40 ? 'warning' : 'danger' },
+    { label: 'Reopen rate',      value: `${totals.reopenRate}%`, icon: '↺', color: col(totals.reopenRate, 5, 15) },
+    { label: 'SLA breached',     value: totals.breachedOpen,     icon: '!', color: totals.breachedOpen > 0 ? 'danger' : 'success' },
+    { label: 'Opened this week', value: totals.openedThisWeek,   icon: '↑', color: 'neutral' },
+  ];
+  container.innerHTML = `<div class="res-grid">${stats.map(s => `
+    <div class="res-stat res-stat--${s.color}">
+      <span class="res-icon">${s.icon}</span>
+      <strong class="res-value">${escapeHtml(String(s.value))}</strong>
+      <span class="res-label">${escapeHtml(s.label)}</span>
+    </div>`).join('')}</div>`;
+}
+
 function renderWorkloadTable(container, data) {
   if (!container) return;
   const items = (data || []);
@@ -966,7 +1002,7 @@ function renderWorkloadTable(container, data) {
 
   container.innerHTML = `
     <table class="wl-table">
-      <thead><tr><th>Assignee</th><th title="Open">○</th><th title="In Progress">◑</th><th title="Blocked">⊘</th><th class="wl-bar-col">Load</th></tr></thead>
+      <thead><tr><th>Assignee</th><th>Open</th><th>Active</th><th>Blocked</th><th class="wl-bar-col">Load</th></tr></thead>
       <tbody>${items.map(row => `
         <tr>
           <td class="wl-name">${escapeHtml(row.assignee || '—')}</td>
