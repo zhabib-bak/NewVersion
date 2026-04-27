@@ -1037,11 +1037,19 @@ function getDashboardData() {
   };
 }
 
+const DATE_HEADERS = new Set(['date_opening', 'date_closed', 'due_date']);
+
+function isoToDmy(value) {
+  if (!value) return '';
+  const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(value);
+}
+
 function toCsv(rows) {
   const headers = ['id', 'jd_ticket_number', 'description', 'category', 'priority', 'status', 'assignee', 'manager', 'date_opening', 'date_closed', 'due_date', 'aging', 'is_sla_breached'];
-  const lines = [headers.join(',')];
+  const lines = ['﻿' + headers.join(',')];
   for (const row of rows) {
-    lines.push(headers.map((header) => csvCell(row[header])).join(','));
+    lines.push(headers.map((header) => csvCell(DATE_HEADERS.has(header) ? isoToDmy(row[header]) : row[header])).join(','));
   }
   return lines.join('\n');
 }
