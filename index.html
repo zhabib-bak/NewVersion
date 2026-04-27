@@ -199,7 +199,16 @@
         </section>
 
         <section id="tab-dashboards" class="tab-panel">
+          <div class="dashboard-header">
+            <div>
+              <h2 class="dashboard-title">Operations Dashboard</h2>
+              <p class="dashboard-meta" id="dashboard-updated">Loading…</p>
+            </div>
+            <button type="button" id="refresh-dashboard" class="ghost" style="font-size:.82rem;align-self:flex-start">↺ Refresh</button>
+          </div>
+          <p class="section-label">Key metrics</p>
           <section id="summary-cards" class="summary-grid"></section>
+          <p class="section-label">Ticket flow</p>
 
           <section class="charts-grid charts-grid--wide">
             <article class="panel chart-panel chart-panel--wide">
@@ -211,6 +220,7 @@
             </article>
           </section>
 
+          <p class="section-label">Trends &amp; breakdown</p>
           <section class="charts-grid">
             <article class="panel chart-panel">
               <div class="chart-head">
@@ -234,17 +244,35 @@
               </div>
               <div id="closed-trend-chart"></div>
             </article>
-            <article class="panel chart-panel"><h3>Open by priority</h3><div id="priority-chart"></div></article>
-            <article class="panel chart-panel"><h3>Open by assignee</h3><div id="assignee-chart"></div></article>
-            <article class="panel chart-panel"><h3>Open by category</h3><div id="category-chart"></div></article>
-            <article class="panel chart-panel"><h3>Open by manager</h3><div id="manager-chart"></div></article>
-            <article class="panel chart-panel"><h3>Throughput by week</h3><div id="throughput-chart"></div></article>
-            <article class="panel chart-panel"><h3>Backlog aging</h3><div id="aging-buckets-chart"></div></article>
+            <article class="panel chart-panel">
+              <div class="chart-head"><h3>Open by priority</h3><span class="chart-subtitle">Current open tickets</span></div>
+              <div id="priority-chart"></div>
+            </article>
+            <article class="panel chart-panel">
+              <div class="chart-head"><h3>Open by assignee</h3><span class="chart-subtitle">Workload distribution</span></div>
+              <div id="assignee-chart"></div>
+            </article>
+            <article class="panel chart-panel">
+              <div class="chart-head"><h3>Open by category</h3><span class="chart-subtitle">Topic distribution</span></div>
+              <div id="category-chart"></div>
+            </article>
+            <article class="panel chart-panel">
+              <div class="chart-head"><h3>Open by manager</h3><span class="chart-subtitle">Team breakdown</span></div>
+              <div id="manager-chart"></div>
+            </article>
+            <article class="panel chart-panel">
+              <div class="chart-head"><h3>Throughput by week</h3><span class="chart-subtitle">Closed tickets</span></div>
+              <div id="throughput-chart"></div>
+            </article>
+            <article class="panel chart-panel">
+              <div class="chart-head"><h3>Backlog aging</h3><span class="chart-subtitle">Days since opened</span></div>
+              <div id="aging-buckets-chart"></div>
+            </article>
           </section>
 
           <section class="charts-grid charts-grid--wide">
             <article class="panel chart-panel chart-panel--wide">
-              <h3>Status breakdown</h3>
+              <div class="chart-head"><h3>Status breakdown</h3><span class="chart-subtitle">All open tickets by status</span></div>
               <div id="status-breakdown-chart"></div>
             </article>
           </section>
