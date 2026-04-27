@@ -999,6 +999,42 @@ function getDashboardData() {
       }
       return result;
     })(),
+    prevWeek: (() => {
+      const now = Date.now();
+      const thisStart = now - 7 * 86400000;
+      const prevStart = now - 14 * 86400000;
+      return {
+        openedThisWeek: all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= prevStart && Date.parse(`${t.date_opening}T00:00:00Z`) < thisStart).length,
+        closedThisWeek: closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= prevStart && Date.parse(`${t.date_closed}T00:00:00Z`) < thisStart).length,
+      };
+    })(),
+    atRisk: open
+      .filter(t => t.priority === 'P1 high' || t.status === 'Blocked' || t.aging >= 10)
+      .sort((a, b) => b.aging - a.aging)
+      .slice(0, 6)
+      .map(t => ({
+        id: t.id,
+        jd_ticket_number: t.jd_ticket_number || '',
+        description: t.description || '',
+        priority: t.priority || '',
+        status: t.status || '',
+        aging: t.aging || 0,
+        assignee: t.assignee || ''
+      })),
+    sparklines: (() => {
+      const now = Date.now();
+      const opened = Array.from({ length: 7 }, (_, i) => {
+        const dayStart = now - (6 - i) * 86400000;
+        const dayEnd = dayStart + 86400000;
+        return all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= dayStart && Date.parse(`${t.date_opening}T00:00:00Z`) < dayEnd).length;
+      });
+      const closedArr = Array.from({ length: 7 }, (_, i) => {
+        const dayStart = now - (6 - i) * 86400000;
+        const dayEnd = dayStart + 86400000;
+        return closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= dayStart && Date.parse(`${t.date_closed}T00:00:00Z`) < dayEnd).length;
+      });
+      return { opened, closed: closedArr };
+    })(),
   };
 }
 
