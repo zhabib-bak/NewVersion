@@ -1311,16 +1311,37 @@ function validateImportRow(row, meta) {
   if (!row.category) errors.push("Category is required");
   if (!row.priority) errors.push("Priority is required");
   if (!row.date_opening) errors.push("Date opened is required");
-  else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date_opening)) errors.push("Date opened must be DD/MM/YYYY or M/D/YYYY");
-  if (row.date_closed && !/^\d{4}-\d{2}-\d{2}$/.test(row.date_closed)) errors.push("Date closed must be DD/MM/YYYY or M/D/YYYY");
+  else if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date_opening)) errors.push(`Date opened unrecognized: "${row.date_opening}" — use DD/MM/YYYY`);
+  if (row.date_closed && !/^\d{4}-\d{2}-\d{2}$/.test(row.date_closed)) errors.push(`Date closed unrecognized: "${row.date_closed}" — use DD/MM/YYYY`);
   return errors;
+}
+
+const DATE_FIELDS = new Set(["date_opening", "date_closed", "due_date"]);
+
+function normalizeDateField(value) {
+  if (!value) return value;
+  const s = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  let m = s.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  if (m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+  m = s.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
+  if (m) {
+    const day = Number(m[1]), month = Number(m[2]);
+    if (month > 12 && day <= 12)
+      return `${m[3]}-${m[1].padStart(2,"0")}-${m[2].padStart(2,"0")}`;
+    return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  }
+  return value;
 }
 
 function applyMapping(records, mapping) {
   return records.map((record) => {
     const mapped = {};
     for (const [userCol, systemField] of Object.entries(mapping)) {
-      if (systemField) mapped[systemField] = record[userCol] || "";
+      if (systemField) {
+        const raw = record[userCol] || "";
+        mapped[systemField] = DATE_FIELDS.has(systemField) ? normalizeDateField(raw) : raw;
+      }
     }
     return mapped;
   });
