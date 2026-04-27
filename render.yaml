@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: ticket-tracker
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /app/data
+      - key: SESSION_DURATION_HOURS
+        value: "12"
+      - key: TICKET_APP_DEFAULT_PASSWORD
+        generateValue: true
+      - key: SEED_FORCE_RESET
+        value: "false"
+    disk:
+      name: data
+      mountPath: /app/data
+      sizeGB: 1

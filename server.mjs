@@ -18,6 +18,7 @@ const LEGACY_DB_PATH = join(ROOT, 'tickets.db');
 const SESSION_DURATION_MS = Number(process.env.SESSION_DURATION_HOURS || 12) * 60 * 60 * 1000;
 const IS_PROD = process.env.NODE_ENV === 'production';
 const DEFAULT_SEED_PASSWORD = process.env.TICKET_APP_DEFAULT_PASSWORD || 'ChangeMe!2026';
+const SEED_FORCE_RESET = process.env.SEED_FORCE_RESET !== 'false';
 const WEBHOOK_TIMEOUT_MS = Number(process.env.WEBHOOK_TIMEOUT_MS || 5000);
 const WEBHOOK_ALLOWLIST = (process.env.WEBHOOK_ALLOWLIST || '')
   .split(',')
@@ -486,13 +487,14 @@ function decryptSecret(payload) {
 }
 
 function seedUsers() {
+  const resetRequired = SEED_FORCE_RESET ? 1 : 0;
   for (const user of SEED_USERS) {
-    stmtUsers.insert.run(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), 1, '');
+    stmtUsers.insert.run(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), resetRequired, '');
   }
   const rows = db.prepare('SELECT id, auth_secret_hash FROM user_accounts').all();
   for (const row of rows) {
     if (!row.auth_secret_hash) {
-      stmtUsers.setSecret.run(hashPassword(DEFAULT_SEED_PASSWORD), 1, row.id);
+      stmtUsers.setSecret.run(hashPassword(DEFAULT_SEED_PASSWORD), resetRequired, row.id);
     }
   }
   db.prepare("UPDATE user_accounts SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE name = 'Jawad'").run();
