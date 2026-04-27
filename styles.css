@@ -596,6 +596,68 @@ tr.import-row-error td:first-child { border-left: 3px solid var(--danger); }
 }
 .attachment-upload { margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
+/* ─── DASHBOARD ENHANCEMENTS ────────────────────────────────────────────────── */
+
+.charts-grid--wide { grid-template-columns: 1fr; }
+
+.chart-panel--wide { min-height: 200px; }
+
+/* Color-coded summary cards */
+.summary-card--danger .summary-value  { color: var(--danger); }
+.summary-card--warning .summary-value { color: var(--warning); }
+.summary-card--success .summary-value { color: var(--success); }
+.summary-card--brand .summary-value   { color: var(--brand); }
+.summary-card--neutral .summary-value { color: #b6caf0; }
+
+.summary-card--danger  { border-color: rgba(255,107,95,.2); }
+.summary-card--warning { border-color: rgba(255,179,71,.2); }
+.summary-card--success { border-color: rgba(78,212,168,.18); }
+.summary-card--brand   { border-color: rgba(50,180,141,.2); }
+
+/* H-fill color variants */
+.h-fill--danger  { background: linear-gradient(90deg, #ff6b5f, #e05050); }
+.h-fill--warning { background: linear-gradient(90deg, #ffb347, #e09030); }
+.h-fill--success { background: linear-gradient(90deg, #4ed4a8, #32b48d); }
+.h-fill--neutral { background: linear-gradient(90deg, #6c8db7, #5a7a9f); }
+.h-fill--brand   { background: linear-gradient(90deg, #32b48d, #2ed0a0); }
+
+/* Dual bar chart */
+.v-bar-track--dual {
+  display: flex;
+  gap: 3px;
+  align-items: flex-end;
+  padding: 0 2px;
+}
+.v-bar-fill--opened {
+  flex: 1;
+  border-radius: 6px 6px 0 0;
+  background: linear-gradient(180deg, #5ca9ff, #3a7fd4);
+}
+.v-bar-fill--closed {
+  flex: 1;
+  border-radius: 6px 6px 0 0;
+  background: linear-gradient(180deg, #4ed4a8, #32b48d);
+}
+
+.chart-legend {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-top: 10px;
+  font-size: .82rem;
+}
+.legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 4px;
+}
+.legend-dot--opened { background: #5ca9ff; }
+.legend-dot--closed { background: #4ed4a8; }
+
+/* ─── END DASHBOARD ENHANCEMENTS ─────────────────────────────────────────────── */
+
 @media (max-width: 1500px) {
   .kanban-board { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
