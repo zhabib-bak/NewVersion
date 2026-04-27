@@ -1721,7 +1721,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && url.pathname === '/api/tickets') {
-      assertRole(auth, 'user');
+      assertRole(auth, 'manager');
       const payload = normalizeTicketInput(await readRequestBody(request));
       const due = calculateDueDate(payload.date_opening, payload.priority);
       const result = stmtTickets.insert.run(
