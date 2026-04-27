@@ -99,6 +99,8 @@ const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 const db = new DatabaseSync(DB_PATH);
 db.exec('PRAGMA foreign_keys = ON;');
 db.exec('PRAGMA journal_mode = WAL;');
+db.exec('PRAGMA synchronous = NORMAL;');
+db.exec('PRAGMA wal_autocheckpoint = 100;');
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS user_accounts (
@@ -1900,3 +1902,17 @@ const server = createServer(async (request, response) => {
 server.listen(PORT, () => {
   console.log(`Ticket app running on http://localhost:${PORT}`);
 });
+
+function gracefulShutdown(signal) {
+  console.log(`${signal} received — checkpointing WAL and closing DB`);
+  try {
+    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
+    db.close();
+  } catch (err) {
+    console.error('Error during DB shutdown:', err.message);
+  }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
