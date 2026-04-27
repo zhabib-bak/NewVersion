@@ -199,6 +199,7 @@ function bindEvents() {
       renderDashboard();
     });
   });
+  document.getElementById("refresh-dashboard")?.addEventListener("click", () => refreshDashboard());
   elements.tabButtons.forEach((button) => {
     button.addEventListener("click", () => {
       state.activeTab = button.dataset.tab;
