@@ -871,21 +871,28 @@ function renderSvgFlowChart(container, data) {
 function renderLeadTimeChart(container, data) {
   if (!container) return;
   const items = (data || []);
-  if (!items.length) { container.innerHTML = '<p class="empty-state">No closed tickets yet.</p>'; return; }
+  const total = items.reduce((s, d) => s + d.value, 0);
+  if (!items.length || total === 0) {
+    container.innerHTML = '<p class="empty-state">No closed tickets yet.</p>';
+    return;
+  }
   const max = Math.max(...items.map(d => d.value), 1);
-  const colors = ['#25a87e','#4db87a','#f5a623','#e8734a','#d94f4f'];
-  const W = 340, H = 160, PAD = { top: 20, right: 10, bottom: 28, left: 28 };
+  const colors = ['#25a87e', '#4db87a', '#f5a623', '#e8734a', '#d94f4f'];
+  const W = 400, H = 130, PAD = { top: 24, right: 10, bottom: 30, left: 10 };
   const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
-  const bW = Math.floor(cW / items.length) - 6;
+  const gap = 8, bW = Math.floor((cW - gap * (items.length - 1)) / items.length);
   const bars = items.map((item, i) => {
-    const bH = item.value ? Math.max(4, Math.round((item.value / max) * cH)) : 0;
-    const x = PAD.left + i * (bW + 6);
+    const pct = item.value / max;
+    const bH = item.value ? Math.max(6, Math.round(pct * cH)) : 3;
+    const x = PAD.left + i * (bW + gap);
     const y = PAD.top + cH - bH;
-    return `<rect x="${x}" y="${y}" width="${bW}" height="${bH}" rx="3" fill="${colors[i] || '#888'}"/>
-            <text x="${x + bW/2}" y="${y - 4}" text-anchor="middle" class="svg-bar-value">${item.value || ''}</text>
-            <text x="${x + bW/2}" y="${H - 6}" text-anchor="middle" class="svg-axis-label">${item.label}</text>`;
+    const opacity = item.value ? 1 : 0.2;
+    return `<rect x="${x}" y="${y}" width="${bW}" height="${bH}" rx="4" fill="${colors[i]}" opacity="${opacity}"/>
+            ${item.value ? `<text x="${x + bW/2}" y="${y - 5}" text-anchor="middle" class="svg-bar-value" fill="${colors[i]}">${item.value}</text>` : ''}
+            <text x="${x + bW/2}" y="${H - 4}" text-anchor="middle" class="svg-axis-label">${item.label}</text>`;
   }).join('');
-  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="svg-vbar" role="img" aria-label="Lead time distribution">${bars}</svg>`;
+  const baseline = `<line x1="${PAD.left}" y1="${PAD.top + cH}" x2="${W - PAD.right}" y2="${PAD.top + cH}" stroke="var(--border)" stroke-width="1"/>`;
+  container.innerHTML = `<svg viewBox="0 0 ${W} ${H}" class="svg-vbar" role="img" aria-label="Lead time distribution" style="max-height:130px">${baseline}${bars}</svg>`;
 }
 
 function renderCategoryTrendChart(container, data) {
