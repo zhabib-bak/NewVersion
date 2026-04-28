@@ -829,37 +829,54 @@ function renderSvgFlowChart(container, data) {
   const items = (data || []).slice(-8);
   if (!items.length) { container.innerHTML = `<p class="empty-state">No data.</p>`; return; }
 
-  const W = 560, H = 180, PAD = { top: 14, right: 12, bottom: 34, left: 28 };
+  const W = 560, H = 180, PAD = { top: 18, right: 16, bottom: 30, left: 36 };
   const cW = W - PAD.left - PAD.right, cH = H - PAD.top - PAD.bottom;
-  const maxVal = Math.max(...items.flatMap(d => [d.opened, d.closed]), 1);
+  const rawMax = Math.max(...items.flatMap(d => [d.opened, d.closed]), 1);
+  const niceMax = rawMax <= 4 ? 4 : rawMax <= 8 ? 8 : rawMax <= 12 ? 12 : Math.ceil(rawMax / 5) * 5;
   const xStep = cW / Math.max(items.length - 1, 1);
-  const y = v => PAD.top + cH - Math.round((v / maxVal) * cH);
+  const y = v => PAD.top + cH - (v / niceMax) * cH;
   const pts = key => items.map((d, i) => [PAD.left + i * xStep, y(d[key])]);
 
-  const area = (points, color) => {
+  // Y-axis grid lines at 50% and 100%
+  const gridLines = [0.5, 1].map(pct => {
+    const val = Math.round(pct * niceMax);
+    const yg = y(val).toFixed(1);
+    return `<line x1="${PAD.left}" y1="${yg}" x2="${W - PAD.right}" y2="${yg}" stroke="rgba(153,173,197,0.1)" stroke-width="1" stroke-dasharray="3 3"/>
+            <text x="${(PAD.left - 5).toFixed(1)}" y="${(parseFloat(yg) + 3.5).toFixed(1)}" text-anchor="end">${val}</text>`;
+  }).join('');
+
+  const area = (points, colorVar) => {
     const line = points.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join('');
-    const close = `L${points[points.length - 1][0].toFixed(1)},${(PAD.top + cH).toFixed(1)} L${points[0][0].toFixed(1)},${(PAD.top + cH).toFixed(1)} Z`;
-    return `<path d="${line} ${close}" fill="${color}" opacity="0.12"/>
-            <path d="${line}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    const bY = (PAD.top + cH).toFixed(1);
+    const close = `L${points[points.length - 1][0].toFixed(1)},${bY} L${points[0][0].toFixed(1)},${bY} Z`;
+    return `<path d="${line} ${close}" fill="${colorVar}" opacity="0.08"/>
+            <path d="${line}" fill="none" stroke="${colorVar}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
   };
 
-  const dots = (points, color) => points.map(p =>
-    `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3.5" fill="${color}" stroke="var(--surface)" stroke-width="1.5"/>`
-  ).join('');
-
-  const axisLabels = items.map((d, i) =>
-    `<text x="${(PAD.left + i * xStep).toFixed(1)}" y="${H - 6}" text-anchor="middle" class="svg-axis-label">${escapeHtml(d.label)}</text>`
+  const dots = (points, colorVar) => points.map(p =>
+    `<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="3" fill="${colorVar}" stroke="rgba(11,17,24,0.9)" stroke-width="1.5"/>`
   ).join('');
 
   const openedPts = pts('opened'), closedPts = pts('closed');
+  const last = items[items.length - 1];
+  const lastO = openedPts[openedPts.length - 1];
+  const lastC = closedPts[closedPts.length - 1];
+  const tipOffset = 7;
+
+  const axisLabels = items.map((d, i) =>
+    `<text x="${(PAD.left + i * xStep).toFixed(1)}" y="${H - 4}" text-anchor="middle">${escapeHtml(d.label)}</text>`
+  ).join('');
 
   container.innerHTML = `
-    <svg viewBox="0 0 ${W} ${H}" class="svg-flow" role="img" aria-label="Weekly ticket flow chart" preserveAspectRatio="xMidYMid meet">
-      <line x1="${PAD.left}" y1="${PAD.top + cH}" x2="${W - PAD.right}" y2="${PAD.top + cH}" stroke="var(--border)" stroke-width="1"/>
+    <svg viewBox="0 0 ${W} ${H}" class="svg-flow" role="img" aria-label="Weekly ticket flow chart" preserveAspectRatio="none">
+      <line x1="${PAD.left}" y1="${(PAD.top + cH).toFixed(1)}" x2="${W - PAD.right}" y2="${(PAD.top + cH).toFixed(1)}" stroke="rgba(153,173,197,0.2)" stroke-width="1"/>
+      ${gridLines}
       ${area(openedPts, 'var(--brand)')}
       ${area(closedPts, 'var(--success)')}
       ${dots(openedPts, 'var(--brand)')}
       ${dots(closedPts, 'var(--success)')}
+      ${last.opened ? `<text x="${(lastO[0] + tipOffset).toFixed(1)}" y="${(lastO[1] + 4).toFixed(1)}" fill="var(--brand)" font-weight="600">${last.opened}</text>` : ''}
+      ${last.closed ? `<text x="${(lastC[0] + tipOffset).toFixed(1)}" y="${(lastC[1] - 5).toFixed(1)}" fill="var(--success)" font-weight="600">${last.closed}</text>` : ''}
       ${axisLabels}
     </svg>
     <div class="chart-legend">
