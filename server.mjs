@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { stat, copyFile, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { createConnection as mysqlCreateConnection } from 'mysql2/promise';
 import { URL } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
@@ -96,187 +96,221 @@ mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
 await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
-const db = new DatabaseSync(DB_PATH);
-db.exec('PRAGMA foreign_keys = ON;');
-db.exec('PRAGMA journal_mode = WAL;');
-db.exec('PRAGMA synchronous = NORMAL;');
-db.exec('PRAGMA wal_autocheckpoint = 100;');
+// MySQL configuration
+const DB_HOST = process.env.DB_HOST || 'sql.freedb.tech';
+const DB_PORT = Number(process.env.DB_PORT || 3306);
+const DB_NAME = process.env.DB_NAME || 'freedb_TicketTracker';
+const DB_USER = process.env.DB_USER || 'freedb_mohamad';
+const DB_PASS = process.env.DB_PASS || 'u2!h$fH$29QPQcY';
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS user_accounts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    role TEXT NOT NULL,
-    active INTEGER NOT NULL DEFAULT 1,
-    auth_pin_hash TEXT,
-    auth_secret_hash TEXT,
-    password_reset_required INTEGER NOT NULL DEFAULT 1,
-    failed_login_attempts INTEGER NOT NULL DEFAULT 0,
-    locked_until TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
+// Create MySQL connection pool
+let pool;
 
-  CREATE TABLE IF NOT EXISTS tickets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    description TEXT NOT NULL,
-    jd_ticket_number TEXT NOT NULL,
-    category TEXT NOT NULL,
-    updates_comments TEXT DEFAULT '',
-    priority TEXT NOT NULL,
-    date_opening TEXT NOT NULL,
-    date_closed TEXT,
-    status TEXT NOT NULL,
-    assignee TEXT NOT NULL,
-    manager TEXT NOT NULL,
-    due_date TEXT,
-    reopened_count INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
+async function createPool() {
+  pool = mysqlCreateConnection({
+    host: DB_HOST,
+    port: DB_PORT,
+    user: DB_USER,
+    password: DB_PASS,
+    database: DB_NAME,
+    namedPlaceholders: true,
+    multipleStatements: true
+  });
+  await pool;
+}
 
-  CREATE TABLE IF NOT EXISTS ticket_comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticket_id INTEGER NOT NULL,
-    author TEXT NOT NULL,
-    comment_type TEXT NOT NULL DEFAULT 'Update',
-    body TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
-  );
+async function getConnection() {
+  if (!pool) {
+    await createPool();
+  }
+  return pool;
+}
 
-  CREATE TABLE IF NOT EXISTS session_tokens (
-    id TEXT PRIMARY KEY,
-    user_id INTEGER NOT NULL,
-    csrf_token TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS ticket_audit_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    entity_type TEXT NOT NULL,
-    entity_id INTEGER,
-    action TEXT NOT NULL,
-    actor TEXT NOT NULL,
-    details_json TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS saved_filters (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    name TEXT NOT NULL,
-    filter_json TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    url TEXT NOT NULL,
-    secret_encrypted TEXT,
-    active INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS webhook_deliveries (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    webhook_id INTEGER NOT NULL,
-    event_name TEXT NOT NULL,
-    response_status INTEGER,
-    success INTEGER NOT NULL DEFAULT 0,
-    duration_ms INTEGER,
-    request_id TEXT NOT NULL,
-    error_message TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (webhook_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS import_batches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    batch_name TEXT,
-    imported_by TEXT NOT NULL,
-    file_name TEXT,
-    row_count INTEGER NOT NULL DEFAULT 0,
-    created_count INTEGER NOT NULL DEFAULT 0,
-    error_count INTEGER NOT NULL DEFAULT 0,
-    rolled_back INTEGER NOT NULL DEFAULT 0,
-    rolled_back_at TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS ticket_attachments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ticket_id INTEGER NOT NULL,
-    filename TEXT NOT NULL,
-    mimetype TEXT NOT NULL,
-    size_bytes INTEGER NOT NULL,
-    storage_path TEXT NOT NULL,
-    uploaded_by TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
-  );
-`);
-
-ensureColumn('tickets', 'due_date', 'TEXT');
-ensureColumn('tickets', 'reopened_count', 'INTEGER NOT NULL DEFAULT 0');
-ensureColumn('user_accounts', 'auth_pin_hash', 'TEXT');
-ensureColumn('user_accounts', 'auth_secret_hash', 'TEXT');
-ensureColumn('user_accounts', 'password_reset_required', 'INTEGER NOT NULL DEFAULT 1');
-ensureColumn('user_accounts', 'failed_login_attempts', 'INTEGER NOT NULL DEFAULT 0');
-ensureColumn('user_accounts', 'locked_until', 'TEXT');
-ensureColumn('user_accounts', 'email', 'TEXT');
-ensureColumn('ticket_comments', 'comment_type', "TEXT NOT NULL DEFAULT 'Update'");
-ensureColumn('webhook_subscriptions', 'secret_encrypted', 'TEXT');
-ensureColumn('tickets', 'batch_id', 'INTEGER');
-
-const secretColumnInfo = db.prepare('PRAGMA table_info(webhook_subscriptions)').all();
-const hasLegacySecret = secretColumnInfo.some((column) => column.name === 'secret');
-if (hasLegacySecret) {
-  const legacyHooks = db.prepare("SELECT id, secret FROM webhook_subscriptions WHERE secret IS NOT NULL AND TRIM(secret) <> '' AND (secret_encrypted IS NULL OR TRIM(secret_encrypted) = '')").all();
-  const migrateWebhookSecret = db.prepare('UPDATE webhook_subscriptions SET secret_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?');
-  for (const hook of legacyHooks) {
-    migrateWebhookSecret.run(encryptSecret(hook.secret), hook.id);
+async function query(sql, params = []) {
+  const connection = await getConnection();
+  try {
+    const [results] = await connection.execute(sql, params);
+    return results;
+  } finally {
+    // Connection is automatically returned to pool
   }
 }
 
+// Create MySQL tables individually
+await query(`CREATE TABLE IF NOT EXISTS user_accounts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL UNIQUE,
+  role VARCHAR(50) NOT NULL,
+  active TINYINT NOT NULL DEFAULT 1,
+  auth_pin_hash VARCHAR(255),
+  auth_secret_hash VARCHAR(255),
+  password_reset_required TINYINT NOT NULL DEFAULT 1,
+  failed_login_attempts INT NOT NULL DEFAULT 0,
+  locked_until DATETIME,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS tickets (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  description TEXT NOT NULL,
+  jd_ticket_number VARCHAR(255) NOT NULL,
+  category VARCHAR(100) NOT NULL,
+  updates_comments TEXT,
+  priority VARCHAR(20) NOT NULL,
+  date_opening DATETIME NOT NULL,
+  date_closed DATETIME,
+  status VARCHAR(50) NOT NULL,
+  assignee VARCHAR(255),
+  manager VARCHAR(255),
+  due_date DATETIME,
+  reopened_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS ticket_comments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  ticket_id INT NOT NULL,
+  author VARCHAR(255) NOT NULL,
+  comment_type VARCHAR(50) NOT NULL DEFAULT 'Update',
+  body TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS session_tokens (
+  id VARCHAR(255) PRIMARY KEY,
+  user_id INT NOT NULL,
+  csrf_token VARCHAR(255) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS ticket_audit_log (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  entity_type VARCHAR(50) NOT NULL,
+  entity_id INT,
+  action VARCHAR(100) NOT NULL,
+  actor VARCHAR(255) NOT NULL,
+  details_json TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS saved_filters (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  filter_json TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  url TEXT NOT NULL,
+  secret_encrypted TEXT,
+  active TINYINT NOT NULL DEFAULT 1,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  webhook_id INT NOT NULL,
+  event_name VARCHAR(100) NOT NULL,
+  response_status INT,
+  success TINYINT NOT NULL DEFAULT 0,
+  duration_ms INT,
+  request_id VARCHAR(255) NOT NULL,
+  error_message TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (webhook_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS import_batches (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  batch_name VARCHAR(255),
+  imported_by VARCHAR(255) NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  row_count INT NOT NULL,
+  created_count INT NOT NULL DEFAULT 0,
+  error_count INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)`);
+
+await query(`CREATE TABLE IF NOT EXISTS ticket_attachments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  ticket_id INT NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  content_type VARCHAR(100) NOT NULL,
+  size_bytes INT NOT NULL,
+  storage_path VARCHAR(500) NOT NULL,
+  uploaded_by VARCHAR(255) NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+)`);
+
+// MySQL column additions (if needed)
+async function ensureColumn(table, column, definition) {
+  try {
+    await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`);
+  } catch (error) {
+    // Column might already exist, ignore error
+  }
+}
+
+await ensureColumn('tickets', 'due_date', 'DATETIME');
+await ensureColumn('tickets', 'reopened_count', 'INT NOT NULL DEFAULT 0');
+await ensureColumn('user_accounts', 'auth_pin_hash', 'VARCHAR(255)');
+await ensureColumn('user_accounts', 'auth_secret_hash', 'VARCHAR(255)');
+await ensureColumn('user_accounts', 'password_reset_required', 'TINYINT NOT NULL DEFAULT 1');
+await ensureColumn('user_accounts', 'failed_login_attempts', 'INT NOT NULL DEFAULT 0');
+await ensureColumn('user_accounts', 'locked_until', 'DATETIME');
+await ensureColumn('user_accounts', 'email', 'VARCHAR(255)');
+await ensureColumn('ticket_comments', 'comment_type', "VARCHAR(50) NOT NULL DEFAULT 'Update'");
+await ensureColumn('webhook_subscriptions', 'secret_encrypted', 'TEXT');
+await ensureColumn('tickets', 'batch_id', 'INT');
+
+// Check for legacy secret column migration
+const secretColumnInfo = await query('SHOW COLUMNS FROM webhook_subscriptions');
+const hasLegacySecret = secretColumnInfo.some((column) => column.Field === 'secret');
+if (hasLegacySecret) {
+  const legacyHooks = await query("SELECT id, secret FROM webhook_subscriptions WHERE secret IS NOT NULL AND TRIM(secret) <> '' AND (secret_encrypted IS NULL OR TRIM(secret_encrypted) = '')");
+  for (const hook of legacyHooks) {
+    await query('UPDATE webhook_subscriptions SET secret_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [encryptSecret(hook.secret), hook.id]);
+  }
+}
+
+// MySQL query functions
 const stmtUsers = {
-  list: db.prepare(`
+  list: async () => await query(`
     SELECT id, name, role, active, password_reset_required, failed_login_attempts, locked_until, created_at, updated_at
     FROM user_accounts
     ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END, name ASC
   `),
-  byName: db.prepare('SELECT * FROM user_accounts WHERE name = ?'),
-  byId: db.prepare('SELECT * FROM user_accounts WHERE id = ?'),
-  insert: db.prepare(`
-    INSERT OR IGNORE INTO user_accounts (
-      name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)
-  `),
-  update: db.prepare(`
-    UPDATE user_accounts
-    SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, email = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `),
-  setSecret: db.prepare(`
-    UPDATE user_accounts
-    SET auth_secret_hash = ?, auth_pin_hash = NULL, password_reset_required = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `),
-  loginFail: db.prepare('UPDATE user_accounts SET failed_login_attempts = ?, locked_until = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'),
-  resetLoginFailures: db.prepare('UPDATE user_accounts SET failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?'),
-  delete: db.prepare('DELETE FROM user_accounts WHERE id = ?')
+  byName: async (name) => (await query('SELECT * FROM user_accounts WHERE name = ?', [name]))[0],
+  byId: async (id) => (await query('SELECT * FROM user_accounts WHERE id = ?', [id]))[0],
+  insert: async (name, role, active, auth_secret_hash, password_reset_required, email) => 
+    await query('INSERT IGNORE INTO user_accounts (name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)', [name, role, active, auth_secret_hash, password_reset_required, email]),
+  update: async (name, role, active, auth_secret_hash, password_reset_required, email, id) =>
+    await query('UPDATE user_accounts SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, role, active, auth_secret_hash, password_reset_required, email, id]),
+  setSecret: async (auth_secret_hash, password_reset_required, id) =>
+    await query('UPDATE user_accounts SET auth_secret_hash = ?, auth_pin_hash = NULL, password_reset_required = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [auth_secret_hash, password_reset_required, id]),
+  loginFail: async (failed_login_attempts, locked_until, id) =>
+    await query('UPDATE user_accounts SET failed_login_attempts = ?, locked_until = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [failed_login_attempts, locked_until, id]),
+  resetLoginFailures: async (id) =>
+    await query('UPDATE user_accounts SET failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [id]),
+  delete: async (id) => await query('DELETE FROM user_accounts WHERE id = ?', [id])
 };
 
 const stmtTickets = {
-  byId: db.prepare('SELECT * FROM tickets WHERE id = ?'),
-  listBase: (where) => db.prepare(`
+  byId: async (id) => (await query('SELECT * FROM tickets WHERE id = ?', [id]))[0],
+  listBase: async (where) => await query(`
     SELECT * FROM tickets
     ${where}
     ORDER BY
@@ -284,124 +318,100 @@ const stmtTickets = {
       date_opening DESC,
       id DESC
   `),
-  insert: db.prepare(`
-    INSERT INTO tickets (
-      description, jd_ticket_number, category, updates_comments, priority,
-      date_opening, date_closed, status, assignee, manager, due_date, reopened_count, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)
-  `),
-  update: db.prepare(`
-    UPDATE tickets SET
-      description = ?,
-      jd_ticket_number = ?,
-      category = ?,
-      updates_comments = ?,
-      priority = ?,
-      date_opening = ?,
-      date_closed = ?,
-      status = ?,
-      assignee = ?,
-      manager = ?,
-      due_date = ?,
-      reopened_count = ?,
-      updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?
-  `),
-  delete: db.prepare('DELETE FROM tickets WHERE id = ?')
+  insert: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date) =>
+    await query('INSERT INTO tickets (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)', [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date]),
+  update: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id) =>
+    await query('UPDATE tickets SET description = ?, jd_ticket_number = ?, category = ?, updates_comments = ?, priority = ?, date_opening = ?, date_closed = ?, status = ?, assignee = ?, manager = ?, due_date = ?, reopened_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id]),
+  delete: async (id) => await query('DELETE FROM tickets WHERE id = ?', [id])
 };
 
 const stmtComments = {
-  listByTicket: db.prepare(`
+  listByTicket: async (ticket_id) => await query(`
     SELECT id, ticket_id, author, comment_type, body, created_at
     FROM ticket_comments
     WHERE ticket_id = ?
-    ORDER BY datetime(created_at) ASC, id ASC
-  `),
-  insert: db.prepare(`
-    INSERT INTO ticket_comments (ticket_id, author, comment_type, body, created_at)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `)
+    ORDER BY created_at ASC, id ASC
+  `, [ticket_id]),
+  insert: async (ticket_id, author, comment_type, body) =>
+    await query('INSERT INTO ticket_comments (ticket_id, author, comment_type, body, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', [ticket_id, author, comment_type, body])
 };
 
 const stmtSessions = {
-  byId: db.prepare(`
+  byId: async (id) => (await query(`
     SELECT s.id, s.user_id, s.csrf_token, s.expires_at, u.name, u.role, u.active, u.password_reset_required
     FROM session_tokens s
     JOIN user_accounts u ON u.id = s.user_id
     WHERE s.id = ?
-  `),
-  insert: db.prepare(`
-    INSERT INTO session_tokens (id, user_id, csrf_token, expires_at, last_seen_at)
-    VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `),
-  touch: db.prepare('UPDATE session_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?'),
-  delete: db.prepare('DELETE FROM session_tokens WHERE id = ?'),
-  deleteByUser: db.prepare('DELETE FROM session_tokens WHERE user_id = ?'),
-  purge: db.prepare("DELETE FROM session_tokens WHERE datetime(expires_at) < datetime('now')")
+  `, [id]))[0],
+  insert: async (id, user_id, csrf_token, expires_at) =>
+    await query('INSERT INTO session_tokens (id, user_id, csrf_token, expires_at, last_seen_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', [id, user_id, csrf_token, expires_at]),
+  touch: async (id) => await query('UPDATE session_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?', [id]),
+  delete: async (id) => await query('DELETE FROM session_tokens WHERE id = ?', [id]),
+  deleteByUser: async (user_id) => await query('DELETE FROM session_tokens WHERE user_id = ?', [user_id]),
+  purge: async () => await query('DELETE FROM session_tokens WHERE expires_at < CURRENT_TIMESTAMP')
 };
 
 const stmtFilters = {
-  listByUser: db.prepare('SELECT id, name, filter_json, created_at, updated_at FROM saved_filters WHERE user_id = ? ORDER BY updated_at DESC'),
-  insert: db.prepare('INSERT INTO saved_filters (user_id, name, filter_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)'),
-  delete: db.prepare('DELETE FROM saved_filters WHERE id = ? AND user_id = ?')
+  listByUser: async (user_id) => await query('SELECT id, name, filter_json, created_at, updated_at FROM saved_filters WHERE user_id = ? ORDER BY updated_at DESC', [user_id]),
+  insert: async (user_id, name, filter_json) =>
+    await query('INSERT INTO saved_filters (user_id, name, filter_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)', [user_id, name, filter_json]),
+  delete: async (id, user_id) => await query('DELETE FROM saved_filters WHERE id = ? AND user_id = ?', [id, user_id])
 };
 
 const stmtWebhooks = {
-  list: db.prepare('SELECT id, name, url, active, created_at, updated_at FROM webhook_subscriptions ORDER BY id DESC'),
-  byId: db.prepare('SELECT id, name, url, secret_encrypted, active, created_at, updated_at FROM webhook_subscriptions WHERE id = ?'),
-  insert: db.prepare('INSERT INTO webhook_subscriptions (name, url, secret_encrypted, active, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)'),
-  update: db.prepare('UPDATE webhook_subscriptions SET name = ?, url = ?, secret_encrypted = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?'),
-  delete: db.prepare('DELETE FROM webhook_subscriptions WHERE id = ?'),
-  active: db.prepare('SELECT id, name, url, secret_encrypted FROM webhook_subscriptions WHERE active = 1'),
-  deliveries: db.prepare(`
+  list: async () => await query('SELECT id, name, url, active, created_at, updated_at FROM webhook_subscriptions ORDER BY id DESC'),
+  byId: async (id) => (await query('SELECT id, name, url, secret_encrypted, active, created_at, updated_at FROM webhook_subscriptions WHERE id = ?', [id]))[0],
+  insert: async (name, url, secret_encrypted, active) =>
+    await query('INSERT INTO webhook_subscriptions (name, url, secret_encrypted, active, updated_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', [name, url, secret_encrypted, active]),
+  update: async (name, url, secret_encrypted, active, id) =>
+    await query('UPDATE webhook_subscriptions SET name = ?, url = ?, secret_encrypted = ?, active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, url, secret_encrypted, active, id]),
+  delete: async (id) => await query('DELETE FROM webhook_subscriptions WHERE id = ?', [id]),
+  active: async () => await query('SELECT id, name, url, secret_encrypted FROM webhook_subscriptions WHERE active = 1'),
+  deliveries: async () => await query(`
     SELECT d.id, d.webhook_id, w.name AS webhook_name, d.event_name, d.response_status, d.success, d.duration_ms, d.request_id, d.error_message, d.created_at
     FROM webhook_deliveries d
     JOIN webhook_subscriptions w ON w.id = d.webhook_id
     ORDER BY d.id DESC
     LIMIT 150
   `),
-  logDelivery: db.prepare(`
-    INSERT INTO webhook_deliveries (webhook_id, event_name, response_status, success, duration_ms, request_id, error_message, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `)
+  logDelivery: async (webhook_id, event_name, response_status, success, duration_ms, request_id, error_message) =>
+    await query('INSERT INTO webhook_deliveries (webhook_id, event_name, response_status, success, duration_ms, request_id, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)', [webhook_id, event_name, response_status, success, duration_ms, request_id, error_message])
 };
 
 const stmtAudit = {
-  insert: db.prepare(`
-    INSERT INTO ticket_audit_log (entity_type, entity_id, action, actor, details_json, created_at)
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-  `),
-  list: db.prepare(`
+  insert: async (entity_type, entity_id, action, actor, details_json) =>
+    await query('INSERT INTO ticket_audit_log (entity_type, entity_id, action, actor, details_json, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)', [entity_type, entity_id, action, actor, details_json]),
+  list: async (entity_type, entity_id) => await query(`
     SELECT id, entity_type, entity_id, action, actor, details_json, created_at
     FROM ticket_audit_log
     WHERE (? IS NULL OR entity_type = ?)
       AND (? IS NULL OR entity_id = ?)
     ORDER BY id DESC
     LIMIT 400
-  `)
+  `, [entity_type, entity_type, entity_id, entity_id])
 };
 
 const stmtImport = {
-  insertBatch: db.prepare(`
-    INSERT INTO import_batches (batch_name, imported_by, file_name, row_count, created_count, error_count)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `),
-  updateBatch: db.prepare('UPDATE import_batches SET created_count = ?, error_count = ? WHERE id = ?'),
-  listBatches: db.prepare(`
+  insertBatch: async (batch_name, imported_by, file_name, row_count, created_count, error_count) =>
+    await query('INSERT INTO import_batches (batch_name, imported_by, file_name, row_count, created_count, error_count) VALUES (?, ?, ?, ?, ?, ?)', [batch_name, imported_by, file_name, row_count, created_count, error_count]),
+  updateBatch: async (created_count, error_count, id) =>
+    await query('UPDATE import_batches SET created_count = ?, error_count = ? WHERE id = ?', [created_count, error_count, id]),
+  listBatches: async () => await query(`
     SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, created_at
     FROM import_batches ORDER BY id DESC LIMIT 50
   `),
-  batchById: db.prepare('SELECT * FROM import_batches WHERE id = ?'),
-  deleteBatchTickets: db.prepare('DELETE FROM tickets WHERE batch_id = ?'),
-  deleteBatch: db.prepare('DELETE FROM import_batches WHERE id = ?'),
-  countByBatch: db.prepare('SELECT COUNT(*) AS count FROM tickets WHERE batch_id = ?')
+  batchById: async (id) => (await query('SELECT * FROM import_batches WHERE id = ?', [id]))[0],
+  deleteBatchTickets: async (batch_id) => await query('DELETE FROM tickets WHERE batch_id = ?', [batch_id]),
+  deleteBatch: async (id) => await query('DELETE FROM import_batches WHERE id = ?', [id]),
+  countByBatch: async (batch_id) => (await query('SELECT COUNT(*) AS count FROM tickets WHERE batch_id = ?', [batch_id]))[0]
 };
 
 const stmtAttachments = {
-  listByTicket: db.prepare('SELECT id, ticket_id, filename, mimetype, size_bytes, uploaded_by, created_at FROM ticket_attachments WHERE ticket_id = ? ORDER BY id ASC'),
-  insert: db.prepare('INSERT INTO ticket_attachments (ticket_id, filename, mimetype, size_bytes, storage_path, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)'),
-  byId: db.prepare('SELECT * FROM ticket_attachments WHERE id = ? AND ticket_id = ?'),
-  delete: db.prepare('DELETE FROM ticket_attachments WHERE id = ? AND ticket_id = ?')
+  listByTicket: async (ticket_id) => await query('SELECT id, ticket_id, filename, content_type, size_bytes, uploaded_by, created_at FROM ticket_attachments WHERE ticket_id = ? ORDER BY id ASC', [ticket_id]),
+  insert: async (ticket_id, filename, content_type, size_bytes, storage_path, uploaded_by) =>
+    await query('INSERT INTO ticket_attachments (ticket_id, filename, content_type, size_bytes, storage_path, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)', [ticket_id, filename, content_type, size_bytes, storage_path, uploaded_by]),
+  byId: async (id, ticket_id) => (await query('SELECT * FROM ticket_attachments WHERE id = ? AND ticket_id = ?', [id, ticket_id]))[0],
+  delete: async (id, ticket_id) => await query('DELETE FROM ticket_attachments WHERE id = ? AND ticket_id = ?', [id, ticket_id])
 };
 
 seedUsers();
@@ -416,41 +426,39 @@ class HttpError extends Error {
   }
 }
 
-function ensurePerformanceIndexes() {
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status);
-    CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority);
-    CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee);
-    CREATE INDEX IF NOT EXISTS idx_tickets_manager ON tickets(manager);
-    CREATE INDEX IF NOT EXISTS idx_tickets_date_opening ON tickets(date_opening);
-    CREATE INDEX IF NOT EXISTS idx_tickets_batch_id ON tickets(batch_id);
-    CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id);
-    CREATE INDEX IF NOT EXISTS idx_saved_filters_user_id ON saved_filters(user_id);
-  `);
-}
-
-function ensureColumn(table, column, definition) {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!columns.some((col) => col.name === column)) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+async function ensurePerformanceIndexes() {
+  try {
+    await query('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)');
+    await query('CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)');
+    await query('CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee)');
+    await query('CREATE INDEX IF NOT EXISTS idx_tickets_manager ON tickets(manager)');
+    await query('CREATE INDEX IF NOT EXISTS idx_tickets_date_opening ON tickets(date_opening)');
+    await query('CREATE INDEX IF NOT EXISTS idx_tickets_batch_id ON tickets(batch_id)');
+    await query('CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id)');
+    await query('CREATE INDEX IF NOT EXISTS idx_saved_filters_user_id ON saved_filters(user_id)');
+  } catch (error) {
+    console.error('[indexes]', error);
   }
 }
 
 async function bootstrapDataStore() {
-  if (!existsSync(DB_PATH) && existsSync(LEGACY_DB_PATH)) {
-    await copyFile(LEGACY_DB_PATH, DB_PATH);
+  if (!existsSync(DATA_DIR)) {
+    mkdirSync(DATA_DIR, { recursive: true });
   }
+  console.log('[bootstrap] MySQL database initialized');
 }
 
 async function loadOrCreateEncryptionKey() {
   const keyPath = join(DATA_DIR, '.app-secrets.json');
-  if (existsSync(keyPath)) {
-    const parsed = JSON.parse(await readFile(keyPath, 'utf8'));
+  try {
+    const raw = await readFile(keyPath, 'utf8');
+    const parsed = JSON.parse(raw);
     return Buffer.from(parsed.webhook_key, 'hex');
+  } catch {
+    const key = randomBytes(32);
+    await writeFile(keyPath, JSON.stringify({ webhook_key: key.toString('hex') }, null, 2), { mode: 0o600 });
+    return key;
   }
-  const key = randomBytes(32);
-  await writeFile(keyPath, JSON.stringify({ webhook_key: key.toString('hex') }, null, 2), { mode: 0o600 });
-  return key;
 }
 
 function hashLegacyPin(pin) {
@@ -491,22 +499,22 @@ function decryptSecret(payload) {
   return decrypted.toString('utf8');
 }
 
-function seedUsers() {
+async function seedUsers() {
   const resetRequired = SEED_FORCE_RESET ? 1 : 0;
   for (const user of SEED_USERS) {
-    stmtUsers.insert.run(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), resetRequired, '');
+    await stmtUsers.insert(user.name, user.role, user.active, hashPassword(DEFAULT_SEED_PASSWORD), resetRequired, '');
   }
-  const rows = db.prepare('SELECT id, auth_secret_hash FROM user_accounts').all();
+  const rows = await query('SELECT id, auth_secret_hash FROM user_accounts');
   for (const row of rows) {
     if (!row.auth_secret_hash) {
-      stmtUsers.setSecret.run(hashPassword(DEFAULT_SEED_PASSWORD), resetRequired, row.id);
+      await stmtUsers.setSecret(hashPassword(DEFAULT_SEED_PASSWORD), resetRequired, row.id);
     }
   }
-  db.prepare("UPDATE user_accounts SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE name = 'Jawad'").run();
+  await query("UPDATE user_accounts SET role = 'admin', updated_at = CURRENT_TIMESTAMP WHERE name = 'Jawad'");
 }
 
-function seedTicketsAndComments() {
-  const count = db.prepare('SELECT COUNT(*) AS count FROM tickets').get().count;
+async function seedTicketsAndComments() {
+  const count = (await query('SELECT COUNT(*) AS count FROM tickets'))[0].count;
   if (count === 0) {
     const today = new Date();
     const format = (date) => date.toISOString().slice(0, 10);
@@ -524,27 +532,25 @@ function seedTicketsAndComments() {
     ];
     for (const item of seed) {
       const dueDate = calculateDueDate(item[5], item[4]);
-      stmtTickets.insert.run(item[0], item[1], item[2], item[3], item[4], item[5], item[6], item[7], item[8], item[9], dueDate);
+      await stmtTickets.insert(item[0], item[1], item[2], item[3], item[4], item[5], item[6], item[7], item[8], item[9], dueDate);
     }
   }
 
-  const old = db.prepare(`
+  const old = await query(`
     SELECT id, assignee, updates_comments FROM tickets
     WHERE TRIM(COALESCE(updates_comments, '')) <> ''
-  `).all();
+  `);
   for (const row of old) {
-    const existing = db.prepare('SELECT COUNT(*) AS count FROM ticket_comments WHERE ticket_id = ?').get(row.id).count;
+    const existing = (await query('SELECT COUNT(*) AS count FROM ticket_comments WHERE ticket_id = ?', [row.id]))[0].count;
     if (existing > 0) continue;
-    stmtComments.insert.run(row.id, row.assignee || 'System', 'Update', row.updates_comments.trim());
+    await stmtComments.insert(row.id, row.assignee || 'System', 'Update', row.updates_comments.trim());
   }
 }
 
 async function createBackupSnapshot() {
-  if (!existsSync(DB_PATH)) return;
-  await mkdir(BACKUP_DIR, { recursive: true });
-  const timestamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
-  const target = join(BACKUP_DIR, `tickets-${timestamp}.db`);
-  await copyFile(DB_PATH, target);
+  // For MySQL, we don't need to create file backups
+  // The database is managed by the MySQL server
+  console.log('[backup] MySQL backup handled by database server');
 }
 
 function securityHeaders(extra = {}) {
@@ -595,24 +601,27 @@ async function readRequestBody(request, limit = MAX_BODY_BYTES) {
   }
 }
 
-function getUsers() {
-  return stmtUsers.list.all();
+async function getUsers() {
+  return await stmtUsers.list();
 }
 
-function getActiveUsers() {
-  return getUsers().filter((user) => user.active === 1);
+async function getActiveUsers() {
+  const users = await getUsers();
+  return users.filter((user) => user.active === 1);
 }
 
-function getAllowedAssignees() {
-  return getActiveUsers().map((user) => user.name);
+async function getAllowedAssignees() {
+  const users = await getActiveUsers();
+  return users.map((user) => user.name);
 }
 
-function getManagers() {
-  return getActiveUsers().filter((u) => ROLE_ORDER[u.role] >= ROLE_ORDER.manager).map((u) => u.name);
+async function getManagers() {
+  const users = await getActiveUsers();
+  return users.filter((u) => ROLE_ORDER[u.role] >= ROLE_ORDER.manager).map((u) => u.name);
 }
 
-function getCommentAuthors() {
-  return getAllowedAssignees();
+async function getCommentAuthors() {
+  return await getAllowedAssignees();
 }
 
 function parseCookies(request) {
@@ -652,22 +661,22 @@ function getRateBucket(method, pathname) {
   return 'read';
 }
 
-function authFromRequest(request) {
-  stmtSessions.purge.run();
+async function authFromRequest(request) {
+  await stmtSessions.purge();
   const cookies = parseCookies(request);
   const sid = cookies.session_id;
   if (!sid) return null;
-  const session = stmtSessions.byId.get(sid);
+  const session = await stmtSessions.byId(sid);
   if (!session) return null;
   if (session.active !== 1) {
-    stmtSessions.delete.run(sid);
+    await stmtSessions.delete(sid);
     return null;
   }
   if (Date.parse(session.expires_at) < Date.now()) {
-    stmtSessions.delete.run(sid);
+    await stmtSessions.delete(sid);
     return null;
   }
-  stmtSessions.touch.run(sid);
+  await stmtSessions.touch(sid);
   return {
     sessionId: sid,
     userId: session.user_id,
@@ -783,7 +792,7 @@ function normalizeCommentInput(input) {
   return { author, comment_type: commentType, body };
 }
 
-function normalizeUserInput(input, currentName = null) {
+async function normalizeUserInput(input, currentName = null) {
   const name = String(input.name || '').trim();
   const role = String(input.role || '').trim();
   const active = Number(input.active ? 1 : 0);
@@ -791,7 +800,7 @@ function normalizeUserInput(input, currentName = null) {
   const email = String(input.email || '').trim();
   if (!name) throw new HttpError(400, 'User name is required.');
   if (!USER_ROLES.includes(role)) throw new HttpError(400, 'Invalid role.');
-  const existing = stmtUsers.byName.get(name);
+  const existing = await stmtUsers.byName(name);
   if (existing && existing.name !== currentName) throw new HttpError(409, 'User name already exists.');
   let secretHash = null;
   let passwordResetRequired = 0;
@@ -839,23 +848,22 @@ function mapTicketRow(row) {
   };
 }
 
-function getComments(ticketId) {
-  return stmtComments.listByTicket.all(ticketId);
+async function getComments(ticketId) {
+  return await stmtComments.listByTicket(ticketId);
 }
 
-function hydrateTicket(row, { withAttachments = true } = {}) {
-  const ticket = mapTicketRow(row);
-  const comments = getComments(row.id);
+async function hydrateTicket(row, { withAttachments = true } = {}) {
+  const comments = await getComments(row.id);
   return {
-    ...ticket,
+    ...row,
     comments,
     comment_count: comments.length,
     last_comment_preview: comments.length ? comments.at(-1).body : '',
-    ...(withAttachments ? { attachments: stmtAttachments.listByTicket.all(row.id) } : {})
+    ...(withAttachments ? { attachments: await stmtAttachments.listByTicket(row.id) } : {})
   };
 }
 
-function listTickets(searchParams, { paginate = true } = {}) {
+async function listTickets(searchParams, { paginate = true } = {}) {
   const page = Math.max(1, Number(searchParams.get('page') || 1));
   const perPage = Math.min(200, Math.max(10, Number(searchParams.get('per_page') || 50)));
 
@@ -906,7 +914,7 @@ function listTickets(searchParams, { paginate = true } = {}) {
   }
 
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  let rows = stmtTickets.listBase(where).all(...values).map((row) => hydrateTicket(row, { withAttachments: false }));
+  let rows = (await stmtTickets.listBase(where)).map((row) => hydrateTicket(row, { withAttachments: false }));
 
   const slaOnly = (searchParams.get('sla_breached') || '').trim();
   if (slaOnly === 'true') rows = rows.filter((ticket) => ticket.is_sla_breached);
@@ -956,8 +964,8 @@ function countBy(rows, field, filterFn = null) {
   return Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
 }
 
-function getDashboardData() {
-  const all = db.prepare('SELECT * FROM tickets ORDER BY date_opening ASC').all().map(mapTicketRow);
+async function getDashboardData() {
+  const all = (await query('SELECT * FROM tickets ORDER BY date_opening ASC')).map(mapTicketRow);
   const open = all.filter((ticket) => ticket.status !== 'Closed');
   const closed = all.filter((ticket) => ticket.status === 'Closed' && ticket.date_closed);
 
@@ -1130,8 +1138,8 @@ function csvCell(value) {
   return `"${raw.replaceAll('"', '""')}"`;
 }
 
-function logAudit(entityType, entityId, action, actor, details) {
-  stmtAudit.insert.run(entityType, entityId ?? null, action, actor, JSON.stringify(details || {}));
+async function logAudit(entityType, entityId, action, actor, details) {
+  await stmtAudit.insert(entityType, entityId ?? null, action, actor, JSON.stringify(details || {}));
 }
 
 function redactWebhook(hook) {
@@ -1179,7 +1187,7 @@ function isPrivateAddress(address) {
 }
 
 async function emitWebhooks(eventName, payload) {
-  const webhooks = stmtWebhooks.active.all();
+  const webhooks = await stmtWebhooks.active();
   if (!webhooks.length) return;
 
   for (const hook of webhooks) {
@@ -1203,7 +1211,7 @@ async function emitWebhooks(eventName, payload) {
     } catch (error) {
       errorMessage = error?.message || 'Delivery failed.';
     }
-    stmtWebhooks.logDelivery.run(hook.id, eventName, responseStatus, success, Date.now() - startedAt, requestId, errorMessage);
+    await stmtWebhooks.logDelivery(hook.id, eventName, responseStatus, success, Date.now() - startedAt, requestId, errorMessage);
   }
 }
 
@@ -1281,8 +1289,8 @@ async function sendEmail(to, subject, body) {
   });
 }
 
-function getUserEmail(name) {
-  const user = stmtUsers.byName.get(name);
+async function getUserEmail(name) {
+  const user = await stmtUsers.byName(name);
   return user?.email || null;
 }
 
@@ -1352,7 +1360,7 @@ const server = createServer(async (request, response) => {
       const payload = await readRequestBody(request);
       const name = String(payload.name || '').trim();
       const password = String(payload.password || '').trim();
-      const user = stmtUsers.byName.get(name);
+      const user = await stmtUsers.byName(name);
       if (!user || user.active !== 1) {
         throw new HttpError(401, 'Invalid credentials.');
       }
@@ -1364,21 +1372,21 @@ const server = createServer(async (request, response) => {
       if (!validModern && !validLegacy) {
         const failures = Number(user.failed_login_attempts || 0) + 1;
         const lockedUntil = failures >= LOGIN_MAX_FAILURES ? new Date(Date.now() + LOGIN_LOCK_MINUTES * 60_000).toISOString() : null;
-        stmtUsers.loginFail.run(failures, lockedUntil, user.id);
+        await stmtUsers.loginFail(failures, lockedUntil, user.id);
         throw new HttpError(401, failures >= LOGIN_MAX_FAILURES ? 'Account temporarily locked after repeated failed logins.' : 'Invalid credentials.');
       }
-      stmtUsers.resetLoginFailures.run(user.id);
+      await stmtUsers.resetLoginFailures(user.id);
       if (validLegacy) {
-        stmtUsers.setSecret.run(hashPassword(password), 1, user.id);
+        await stmtUsers.setSecret(hashPassword(password), 1, user.id);
       }
-      const refreshedUser = stmtUsers.byId.get(user.id);
+      const refreshedUser = await stmtUsers.byId(user.id);
       const remember = !!payload.remember;
       const sessionId = randomUUID();
       const csrf = randomBytes(24).toString('hex');
       const durationMs = remember ? REMEMBER_ME_DAYS * 24 * 3600 * 1000 : SESSION_DURATION_MS;
       const expiresAt = new Date(Date.now() + durationMs).toISOString();
-      stmtSessions.insert.run(sessionId, refreshedUser.id, csrf, expiresAt);
-      logAudit('session', refreshedUser.id, 'login', refreshedUser.name, { ip });
+      await stmtSessions.insert(sessionId, refreshedUser.id, csrf, expiresAt);
+      await logAudit('session', refreshedUser.id, 'login', refreshedUser.name, { ip });
       const cookieMaxAge = remember ? REMEMBER_ME_DAYS * 24 * 3600 : null;
       sendJson(
         response,
@@ -1399,22 +1407,22 @@ const server = createServer(async (request, response) => {
       const currentPassword = String(payload.current_password || '').trim();
       const newPassword = String(payload.new_password || '').trim();
       validatePassword(newPassword);
-      const user = stmtUsers.byId.get(auth.userId);
+      const user = await stmtUsers.byId(auth.userId);
       const validModern = verifyPassword(currentPassword, user.auth_secret_hash);
       const validLegacy = !validModern && !!user.auth_pin_hash && user.auth_pin_hash === hashLegacyPin(currentPassword);
       if (!validModern && !validLegacy) throw new HttpError(401, 'Current password is incorrect.');
       if (currentPassword === newPassword) throw new HttpError(400, 'The new password must be different from the current password.');
-      stmtUsers.setSecret.run(hashPassword(newPassword), 0, auth.userId);
-      stmtSessions.deleteByUser.run(auth.userId);
-      logAudit('user', auth.userId, 'password_changed', auth.name, {});
+      await stmtUsers.setSecret(hashPassword(newPassword), 0, auth.userId);
+      await stmtSessions.deleteByUser(auth.userId);
+      await logAudit('user', auth.userId, 'password_changed', auth.name, {});
       sendJson(response, 200, { success: true, message: 'Password updated. Please sign in again.' }, { 'Set-Cookie': buildSessionCookie('', 0) });
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/api/auth/logout') {
       if (auth) {
-        stmtSessions.delete.run(auth.sessionId);
-        logAudit('session', auth.userId, 'logout', auth.name, { ip });
+        await stmtSessions.delete(auth.sessionId);
+        await logAudit('session', auth.userId, 'logout', auth.name, { ip });
       }
       sendJson(response, 200, { success: true }, { 'Set-Cookie': buildSessionCookie('', 0) });
       return;
@@ -1438,8 +1446,8 @@ const server = createServer(async (request, response) => {
         now: new Date().toISOString(),
         uptime_seconds: Math.round(process.uptime()),
         db: {
-          users: getUsers().length,
-          tickets: db.prepare('SELECT COUNT(*) AS count FROM tickets').get().count
+          users: (await getUsers()).length,
+          tickets: (await query('SELECT COUNT(*) AS count FROM tickets'))[0].count
         }
       });
       return;
@@ -1451,7 +1459,7 @@ const server = createServer(async (request, response) => {
         process_uptime_seconds: Math.round(process.uptime()),
         memory_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
         rate_limit_buckets: rateLimits.size,
-        sessions_active: db.prepare('SELECT COUNT(*) AS count FROM session_tokens').get().count
+        sessions_active: (await query('SELECT COUNT(*) AS count FROM session_tokens'))[0].count
       });
       return;
     }
@@ -1463,9 +1471,9 @@ const server = createServer(async (request, response) => {
         priorities: PRIORITIES,
         statuses: STATUSES,
         commentTypes: COMMENT_TYPES,
-        users: getAllowedAssignees(),
-        managers: getManagers(),
-        commentAuthors: getCommentAuthors(),
+        users: await getAllowedAssignees(),
+        managers: await getManagers(),
+        commentAuthors: await getCommentAuthors(),
         roles: USER_ROLES,
         password_policy: {
           min_length: DEFAULT_PASSWORD_MIN_LENGTH,
@@ -1480,19 +1488,19 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/api/users') {
       assertRole(auth, 'manager');
-      sendJson(response, 200, { users: getUsers() });
+      sendJson(response, 200, { users: await getUsers() });
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/api/users') {
       assertRole(auth, 'admin');
-      const payload = normalizeUserInput(await readRequestBody(request));
+      const payload = await normalizeUserInput(await readRequestBody(request));
       const secretHash = payload.secretHash || hashPassword(DEFAULT_SEED_PASSWORD);
       const passwordResetRequired = payload.secretHash ? payload.passwordResetRequired : 1;
-      const result = stmtUsers.insert.run(payload.name, payload.role, payload.active, secretHash, passwordResetRequired, payload.email || '');
-      if (result.changes === 0) throw new HttpError(409, 'User already exists.');
-      const user = stmtUsers.byId.get(result.lastInsertRowid);
-      logAudit('user', user.id, 'create', auth.name, { name: user.name, role: user.role, active: user.active });
+      await stmtUsers.insert(payload.name, payload.role, payload.active, secretHash, passwordResetRequired, payload.email || '');
+      const user = await stmtUsers.byName(payload.name);
+      if (!user) throw new HttpError(409, 'User creation failed.');
+      await logAudit('user', user.id, 'create', auth.name, { name: user.name, role: user.role, active: user.active });
       sendJson(response, 201, { user: { id: user.id, name: user.name, role: user.role, active: user.active, password_reset_required: !!user.password_reset_required } });
       return;
     }
@@ -1501,14 +1509,14 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid user id.');
-      const current = stmtUsers.byId.get(id);
+      const current = await stmtUsers.byId(id);
       if (!current) throw new HttpError(404, 'User not found.');
-      const payload = normalizeUserInput(await readRequestBody(request), current.name);
+      const payload = await normalizeUserInput(await readRequestBody(request), current.name);
       const nextResetRequired = payload.secretHash ? payload.passwordResetRequired : current.password_reset_required;
-      stmtUsers.update.run(payload.name, payload.role, payload.active, payload.secretHash, nextResetRequired, payload.email || '', id);
-      if (payload.secretHash) stmtSessions.deleteByUser.run(id);
-      logAudit('user', id, 'update', auth.name, { before: { name: current.name, role: current.role, active: current.active }, after: { name: payload.name, role: payload.role, active: payload.active, password_reset_required: nextResetRequired } });
-      const user = stmtUsers.byId.get(id);
+      await stmtUsers.update(payload.name, payload.role, payload.active, payload.secretHash, nextResetRequired, payload.email || '', id);
+      if (payload.secretHash) await stmtSessions.deleteByUser(id);
+      await logAudit('user', id, 'update', auth.name, { before: { name: current.name, role: current.role, active: current.active }, after: { name: payload.name, role: payload.role, active: payload.active, password_reset_required: nextResetRequired } });
+      const user = await stmtUsers.byId(id);
       sendJson(response, 200, { user: { id: user.id, name: user.name, role: user.role, active: user.active, password_reset_required: !!user.password_reset_required } });
       return;
     }
@@ -1517,20 +1525,20 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid user id.');
-      const current = stmtUsers.byId.get(id);
+      const current = await stmtUsers.byId(id);
       if (!current) throw new HttpError(404, 'User not found.');
-      const used = db.prepare('SELECT id FROM tickets WHERE assignee = ? OR manager = ? LIMIT 1').get(current.name, current.name);
+      const used = (await query('SELECT id FROM tickets WHERE assignee = ? OR manager = ? LIMIT 1', [current.name, current.name])).length > 0;
       if (used) throw new HttpError(409, 'Cannot delete a user assigned to existing tickets.');
-      stmtUsers.delete.run(id);
-      stmtSessions.deleteByUser.run(id);
-      logAudit('user', id, 'delete', auth.name, { name: current.name });
+      await stmtUsers.delete(id);
+      await stmtSessions.deleteByUser(id);
+      await logAudit('user', id, 'delete', auth.name, { name: current.name });
       sendJson(response, 200, { success: true });
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/views') {
       assertRole(auth, 'user');
-      const views = stmtFilters.listByUser.all(auth.userId).map((view) => ({ ...view, filter_json: JSON.parse(view.filter_json) }));
+      const views = (await stmtFilters.listByUser(auth.userId)).map((view) => ({ ...view, filter_json: JSON.parse(view.filter_json) }));
       sendJson(response, 200, { views });
       return;
     }
@@ -1541,8 +1549,11 @@ const server = createServer(async (request, response) => {
       const name = String(payload.name || '').trim();
       if (!name) throw new HttpError(400, 'View name is required.');
       const filter = payload.filter || {};
-      const result = stmtFilters.insert.run(auth.userId, name, JSON.stringify(filter));
-      sendJson(response, 201, { id: result.lastInsertRowid });
+      await stmtFilters.insert(auth.userId, name, JSON.stringify(filter));
+      const views = await stmtFilters.listByUser(auth.userId);
+      const newView = views.find(v => v.name === name);
+      if (!newView) throw new HttpError(500, 'View creation failed.');
+      sendJson(response, 201, { id: newView.id });
       return;
     }
 
@@ -1550,7 +1561,7 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid view id.');
-      stmtFilters.delete.run(id, auth.userId);
+      await stmtFilters.delete(id, auth.userId);
       sendJson(response, 200, { success: true });
       return;
     }
@@ -1560,27 +1571,27 @@ const server = createServer(async (request, response) => {
       const entityType = (url.searchParams.get('entity_type') || '').trim() || null;
       const entityIdValue = (url.searchParams.get('entity_id') || '').trim();
       const entityId = entityIdValue ? Number(entityIdValue) : null;
-      const rows = stmtAudit.list.all(entityType, entityType, entityId, entityId).map((row) => ({ ...row, details_json: JSON.parse(row.details_json) }));
+      const rows = (await stmtAudit.list(entityType, entityId)).map((row) => ({ ...row, details_json: JSON.parse(row.details_json) }));
       sendJson(response, 200, { events: rows });
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/import-history') {
       assertRole(auth, 'manager');
-      const batches = db.prepare('SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, rolled_back, rolled_back_at, created_at FROM import_batches ORDER BY id DESC LIMIT 100').all();
+      const batches = await query('SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, rolled_back, rolled_back_at, created_at FROM import_batches ORDER BY id DESC LIMIT 100');
       sendJson(response, 200, { batches });
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/webhooks') {
       assertRole(auth, 'admin');
-      sendJson(response, 200, { webhooks: stmtWebhooks.list.all().map(redactWebhook) });
+      sendJson(response, 200, { webhooks: (await stmtWebhooks.list()).map(redactWebhook) });
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/webhooks/deliveries') {
       assertRole(auth, 'admin');
-      sendJson(response, 200, { deliveries: stmtWebhooks.deliveries.all() });
+      sendJson(response, 200, { deliveries: await stmtWebhooks.deliveries() });
       return;
     }
 
@@ -1589,9 +1600,12 @@ const server = createServer(async (request, response) => {
       const payload = normalizeWebhookInput(await readRequestBody(request));
       const webhookUrl = await validateWebhookUrl(payload.webhookUrl);
       const secretEncrypted = payload.secret ? encryptSecret(payload.secret) : null;
-      const result = stmtWebhooks.insert.run(payload.name, webhookUrl, secretEncrypted, payload.active);
-      logAudit('webhook', result.lastInsertRowid, 'create', auth.name, { name: payload.name, url: webhookUrl, active: payload.active });
-      sendJson(response, 201, { id: result.lastInsertRowid });
+      await stmtWebhooks.insert(payload.name, webhookUrl, secretEncrypted, payload.active);
+      const webhooks = await stmtWebhooks.list();
+      const newWebhook = webhooks.find(w => w.name === payload.name);
+      if (!newWebhook) throw new HttpError(500, 'Webhook creation failed.');
+      await logAudit('webhook', newWebhook.id, 'create', auth.name, { name: payload.name, url: webhookUrl, active: payload.active });
+      sendJson(response, 201, { id: newWebhook.id });
       return;
     }
 
@@ -1599,13 +1613,13 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid webhook id.');
-      const current = stmtWebhooks.byId.get(id);
+      const current = await stmtWebhooks.byId(id);
       if (!current) throw new HttpError(404, 'Webhook not found.');
       const payload = normalizeWebhookInput(await readRequestBody(request));
       const webhookUrl = await validateWebhookUrl(payload.webhookUrl);
       const secretEncrypted = payload.secret ? encryptSecret(payload.secret) : current.secret_encrypted;
-      stmtWebhooks.update.run(payload.name, webhookUrl, secretEncrypted, payload.active, id);
-      logAudit('webhook', id, 'update', auth.name, { before: redactWebhook(current), after: { name: payload.name, url: webhookUrl, active: payload.active, has_secret: Boolean(secretEncrypted) } });
+      await stmtWebhooks.update(payload.name, webhookUrl, secretEncrypted, payload.active, id);
+      await logAudit('webhook', id, 'update', auth.name, { before: { name: current.name, url: current.url, active: current.active }, after: { name: payload.name, url: webhookUrl, active: payload.active } });
       sendJson(response, 200, { success: true });
       return;
     }
@@ -1614,7 +1628,7 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/')[3]);
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid webhook id.');
-      const hook = stmtWebhooks.byId.get(id);
+      const hook = await stmtWebhooks.byId(id);
       if (!hook) throw new HttpError(404, 'Webhook not found.');
       await emitWebhooks('webhook.test', { webhook_id: id, initiated_by: auth.name, note: 'Manual test event.' });
       sendJson(response, 200, { success: true });
@@ -1625,23 +1639,23 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid webhook id.');
-      const current = stmtWebhooks.byId.get(id);
+      const current = await stmtWebhooks.byId(id);
       if (!current) throw new HttpError(404, 'Webhook not found.');
-      stmtWebhooks.delete.run(id);
-      logAudit('webhook', id, 'delete', auth.name, { name: current.name, url: current.url });
+      await stmtWebhooks.delete(id);
+      await logAudit('webhook', id, 'delete', auth.name, { name: current.name, url: current.url });
       sendJson(response, 200, { success: true });
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/tickets') {
       assertRole(auth, 'user');
-      sendJson(response, 200, listTickets(url.searchParams));
+      sendJson(response, 200, await listTickets(url.searchParams));
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/tickets/export') {
       assertRole(auth, 'user');
-      const result = listTickets(url.searchParams, { paginate: false });
+      const result = await listTickets(url.searchParams, { paginate: false });
       sendText(response, 200, toCsv(result.tickets), {
         'Content-Type': 'text/csv; charset=utf-8',
         'Content-Disposition': `attachment; filename="tickets-${formatIsoDate(Date.now())}.csv"`
@@ -1658,8 +1672,8 @@ const server = createServer(async (request, response) => {
         CATEGORIES[0],
         'P2 medium',
         'Open',
-        getAllowedAssignees()[0] || 'Samuel',
-        getManagers()[0] || 'Adriano',
+        (await getAllowedAssignees())[0] || 'Samuel',
+        (await getManagers())[0] || 'Adriano',
         formatIsoDate(Date.now()),
         '',
         'Opening context for the ticket.'
@@ -1681,16 +1695,18 @@ const server = createServer(async (request, response) => {
       const batchName = String(payload.batch_name || `Import ${formatIsoDate(Date.now())}`).trim().slice(0, 200);
       const fileName = String(payload.file_name || '').trim().slice(0, 255);
 
-      const batchResult = stmtImport.insertBatch.run(batchName, auth.name, fileName, rows.length, 0, 0);
-      const batchId = batchResult.lastInsertRowid;
+      await stmtImport.insertBatch(batchName, auth.name, fileName, rows.length, 0, 0);
+      const batches = await stmtImport.listBatches();
+      const batch = batches.find(b => b.batch_name === batchName);
+      const batchId = batch.id;
       const createdIds = [];
       const errors = [];
 
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         try {
-          const allAssignees = getAllowedAssignees();
-          const allManagers = getManagers();
+          const allAssignees = await getAllowedAssignees();
+          const allManagers = await getManagers();
           const preprocessed = {
             ...row,
             status:   STATUSES.includes(String(row.status || '').trim())   ? String(row.status).trim()   : 'Open',
@@ -1700,19 +1716,20 @@ const server = createServer(async (request, response) => {
             manager:  allManagers.includes(String(row.manager || '').trim())  ? String(row.manager).trim()  : (allManagers[0] || ''),
           };
           const ticket = normalizeTicketInput(preprocessed);
-          const existing = db.prepare('SELECT id FROM tickets WHERE jd_ticket_number = ?').get(ticket.jd_ticket_number);
+          const existing = (await query('SELECT id FROM tickets WHERE jd_ticket_number = ?', [ticket.jd_ticket_number])).length > 0;
           if (existing) {
             errors.push({ row: i + 1, jd_ticket_number: ticket.jd_ticket_number, message: `Duplicate: JD ${ticket.jd_ticket_number} already exists.` });
             continue;
           }
           const due = calculateDueDate(ticket.date_opening, ticket.priority);
-          const result = stmtTickets.insert.run(
+          await stmtTickets.insert(
             ticket.description, ticket.jd_ticket_number, ticket.category, ticket.updates_comments,
             ticket.priority, ticket.date_opening, ticket.date_closed, ticket.status,
             ticket.assignee, ticket.manager, due
           );
-          const newId = result.lastInsertRowid;
-          if (ticket.updates_comments) stmtComments.insert.run(newId, ticket.assignee, 'Update', ticket.updates_comments);
+          const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = '${ticket.jd_ticket_number}'`);
+          const newId = newTicket[0].id;
+          if (ticket.updates_comments) await stmtComments.insert(newId, ticket.assignee, 'Update', ticket.updates_comments);
           createdIds.push(newId);
         } catch (error) {
           errors.push({ row: i + 1, jd_ticket_number: String(row.jd_ticket_number || ''), message: error instanceof HttpError ? error.message : 'Validation error.' });
@@ -1721,16 +1738,16 @@ const server = createServer(async (request, response) => {
 
       if (createdIds.length) {
         const placeholders = createdIds.map(() => '?').join(',');
-        db.prepare(`UPDATE tickets SET batch_id = ? WHERE id IN (${placeholders})`).run(batchId, ...createdIds);
+        await query(`UPDATE tickets SET batch_id = ? WHERE id IN (${placeholders})`, [batchId, ...createdIds]);
       }
-      stmtImport.updateBatch.run(createdIds.length, errors.length, batchId);
-      logAudit('import_batch', batchId, 'bulk_import', auth.name, {
+      await stmtImport.updateBatch(createdIds.length, errors.length, batchId);
+      await logAudit('import_batch', batchId, 'bulk_import', auth.name, {
         batch_name: batchName, file_name: fileName, row_count: rows.length,
         created: createdIds.length, errors: errors.length
       });
       for (const id of createdIds) {
-        const row = stmtTickets.byId.get(id);
-        if (row) emitWebhooks('ticket.created', hydrateTicket(row)).catch(() => {});
+        const row = await stmtTickets.byId(id);
+        if (row) emitWebhooks('ticket.created', await hydrateTicket(row)).catch(() => {});
       }
       sendJson(response, 201, { batch_id: batchId, created: createdIds.length, skipped: errors.length, errors, total: rows.length });
       return;
@@ -1742,7 +1759,7 @@ const server = createServer(async (request, response) => {
       const parts = url.pathname.split('/');
       const ticketId = Number(parts[3]);
       const attachmentId = Number(parts[5]);
-      const attachment = stmtAttachments.byId.get(attachmentId, ticketId);
+      const attachment = await stmtAttachments.byId(attachmentId, ticketId);
       if (!attachment) throw new HttpError(404, 'Attachment not found.');
       response.writeHead(200, securityHeaders({
         'Content-Type': attachment.mimetype,
@@ -1758,17 +1775,17 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
-      const row = stmtTickets.byId.get(id);
+      const row = await stmtTickets.byId(id);
       if (!row) throw new HttpError(404, 'Ticket not found.');
-      sendJson(response, 200, { ticket: hydrateTicket(row) });
+      sendJson(response, 200, { ticket: await hydrateTicket(row) });
       return;
     }
 
     if (request.method === 'POST' && url.pathname === '/api/tickets') {
       assertRole(auth, 'manager');
-      const payload = normalizeTicketInput(await readRequestBody(request));
+      const payload = await normalizeTicketInput(await readRequestBody(request));
       const due = calculateDueDate(payload.date_opening, payload.priority);
-      const result = stmtTickets.insert.run(
+      await stmtTickets.insert(
         payload.description,
         payload.jd_ticket_number,
         payload.category,
@@ -1781,12 +1798,13 @@ const server = createServer(async (request, response) => {
         payload.manager,
         due
       );
-      const row = stmtTickets.byId.get(result.lastInsertRowid);
-      if (payload.updates_comments) stmtComments.insert.run(result.lastInsertRowid, payload.assignee, 'Update', payload.updates_comments);
-      const ticket = hydrateTicket(row);
-      logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
+      const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = '${payload.jd_ticket_number}'`);
+      const row = newTicket[0];
+      if (payload.updates_comments) await stmtComments.insert(row.id, payload.assignee, 'Update', payload.updates_comments);
+      const ticket = await hydrateTicket(row);
+      await logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
       await emitWebhooks('ticket.created', ticket);
-      const assigneeEmail = getUserEmail(ticket.assignee);
+      const assigneeEmail = await getUserEmail(ticket.assignee);
       if (assigneeEmail) {
         sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
       }
@@ -1798,13 +1816,13 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'manager');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
-      const current = stmtTickets.byId.get(id);
+      const current = await stmtTickets.byId(id);
       if (!current) throw new HttpError(404, 'Ticket not found.');
-      const payload = normalizeTicketInput(await readRequestBody(request));
+      const payload = await normalizeTicketInput(await readRequestBody(request));
       validateStatusTransition(current.status, payload.status, auth.role);
       const dueDate = calculateDueDate(payload.date_opening, payload.priority);
       const reopened = payload.status === 'Open' && current.status === 'Closed' ? Number(current.reopened_count || 0) + 1 : Number(current.reopened_count || 0);
-      stmtTickets.update.run(
+      await stmtTickets.update(
         payload.description,
         payload.jd_ticket_number,
         payload.category,
@@ -1819,22 +1837,19 @@ const server = createServer(async (request, response) => {
         reopened,
         id
       );
-      if (current.status !== payload.status) stmtComments.insert.run(id, auth.name, 'System', `Status changed: ${current.status} -> ${payload.status}`);
-      if (current.priority !== payload.priority) stmtComments.insert.run(id, auth.name, 'System', `Priority changed: ${current.priority} -> ${payload.priority}`);
-      if (current.assignee !== payload.assignee) stmtComments.insert.run(id, auth.name, 'System', `Assignee changed: ${current.assignee} -> ${payload.assignee}`);
-      const row = stmtTickets.byId.get(id);
-      const ticket = hydrateTicket(row);
-      logAudit('ticket', id, 'update', auth.name, {
-        before: { status: current.status, priority: current.priority, assignee: current.assignee, manager: current.manager },
-        after: { status: ticket.status, priority: ticket.priority, assignee: ticket.assignee, manager: ticket.manager }
-      });
+      const row = await stmtTickets.byId(id);
+      const ticket = await hydrateTicket(row);
+      await logAudit('ticket', ticket.id, 'update', auth.name, { before: { status: current.status, assignee: current.assignee, manager: current.manager }, after: { status: payload.status, assignee: payload.assignee, manager: payload.manager } });
       await emitWebhooks('ticket.updated', ticket);
+      if (current.status !== payload.status) await stmtComments.insert(id, auth.name, 'System', `Status changed: ${current.status} -> ${payload.status}`);
+      if (current.priority !== payload.priority) await stmtComments.insert(id, auth.name, 'System', `Priority changed: ${current.priority} -> ${payload.priority}`);
+      if (current.assignee !== payload.assignee) await stmtComments.insert(id, auth.name, 'System', `Assignee changed: ${current.assignee} -> ${payload.assignee}`);
       if (current.assignee !== payload.assignee) {
-        const newAssigneeEmail = getUserEmail(ticket.assignee);
+        const newAssigneeEmail = await getUserEmail(ticket.assignee);
         if (newAssigneeEmail) sendEmail(newAssigneeEmail, `[Assigned to you #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
       }
       if (current.status !== payload.status) {
-        const managerEmail = getUserEmail(ticket.manager);
+        const managerEmail = await getUserEmail(ticket.manager);
         if (managerEmail) sendEmail(managerEmail, `[Status changed #${ticket.id}] ${current.status} → ${ticket.status}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
       }
       sendJson(response, 200, { ticket });
@@ -1845,10 +1860,10 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'manager');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
-      const exists = stmtTickets.byId.get(id);
+      const exists = await stmtTickets.byId(id);
       if (!exists) throw new HttpError(404, 'Ticket not found.');
-      stmtTickets.delete.run(id);
-      logAudit('ticket', id, 'delete', auth.name, { jd_ticket_number: exists.jd_ticket_number });
+      await stmtTickets.delete(id);
+      await logAudit('ticket', id, 'delete', auth.name, { jd_ticket_number: exists.jd_ticket_number });
       await emitWebhooks('ticket.deleted', { id, jd_ticket_number: exists.jd_ticket_number });
       sendJson(response, 200, { success: true });
       return;
@@ -1858,13 +1873,14 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/')[3]);
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
-      const exists = stmtTickets.byId.get(id);
+      const exists = await stmtTickets.byId(id);
       if (!exists) throw new HttpError(404, 'Ticket not found.');
-      const payload = normalizeCommentInput(await readRequestBody(request));
-      const result = stmtComments.insert.run(id, payload.author, payload.comment_type, payload.body);
-      db.prepare('UPDATE tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id);
-      const comment = db.prepare('SELECT id, ticket_id, author, comment_type, body, created_at FROM ticket_comments WHERE id = ?').get(result.lastInsertRowid);
-      logAudit('ticket_comment', id, 'create', auth.name, { comment_id: comment.id, author: comment.author, comment_type: comment.comment_type });
+      const payload = await normalizeCommentInput(await readRequestBody(request));
+      await stmtComments.insert(id, payload.author, payload.comment_type, payload.body);
+      await query('UPDATE tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?', [id]);
+      const comments = await query('SELECT id, ticket_id, author, comment_type, body, created_at FROM ticket_comments WHERE ticket_id = ? ORDER BY created_at DESC LIMIT 1', [id]);
+      const comment = comments[0];
+      await logAudit('ticket_comment', id, 'create', auth.name, { comment_id: comment.id, author: comment.author, comment_type: comment.comment_type });
       await emitWebhooks('ticket.comment.created', comment);
       sendJson(response, 201, { comment });
       return;
@@ -1874,12 +1890,12 @@ const server = createServer(async (request, response) => {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid batch id.');
-      const batch = stmtImport.batchById.get(id);
+      const batch = await stmtImport.batchById(id);
       if (!batch) throw new HttpError(404, 'Import batch not found.');
-      const { count } = stmtImport.countByBatch.get(id);
-      stmtImport.deleteBatchTickets.run(id);
-      stmtImport.deleteBatch.run(id);
-      logAudit('import_batch', id, 'rollback', auth.name, { batch_name: batch.batch_name, tickets_deleted: count });
+      const { count } = await stmtImport.countByBatch(id);
+      await stmtImport.deleteBatchTickets(id);
+      await stmtImport.deleteBatch(id);
+      await logAudit('import_batch', id, 'rollback', auth.name, { batch_name: batch.batch_name, tickets_deleted: count });
       sendJson(response, 200, { success: true, tickets_deleted: count });
       return;
     }
@@ -1888,7 +1904,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'POST' && RE_ATTACHMENT_PATH.test(url.pathname)) {
       assertRole(auth, 'user');
       const ticketId = Number(url.pathname.split('/')[3]);
-      const exists = stmtTickets.byId.get(ticketId);
+      const exists = await stmtTickets.byId(ticketId);
       if (!exists) throw new HttpError(404, 'Ticket not found.');
       const payload = await readRequestBody(request, MAX_ATTACHMENT_BODY_BYTES);
       const filename = String(payload.filename || '').trim().replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 200);
@@ -1901,9 +1917,11 @@ const server = createServer(async (request, response) => {
       const storageName = `${randomUUID()}-${filename}`;
       const storagePath = join(DATA_DIR, 'uploads', storageName);
       await writeFile(storagePath, buffer);
-      const result = stmtAttachments.insert.run(ticketId, filename, mimetype, buffer.length, storagePath, auth.name);
-      logAudit('ticket_attachment', ticketId, 'upload', auth.name, { filename, mimetype, size_bytes: buffer.length });
-      sendJson(response, 201, { id: result.lastInsertRowid, ticket_id: ticketId, filename, mimetype, size_bytes: buffer.length, uploaded_by: auth.name });
+      await stmtAttachments.insert(ticketId, filename, mimetype, buffer.length, storagePath, auth.name);
+      const attachments = await stmtAttachments.listByTicket(ticketId);
+      const newAttachment = attachments.find(a => a.filename === filename);
+      await logAudit('ticket_attachment', ticketId, 'upload', auth.name, { filename, mimetype, size_bytes: buffer.length });
+      sendJson(response, 201, { id: newAttachment.id, ticket_id: ticketId, filename, mimetype, size_bytes: buffer.length, uploaded_by: auth.name });
       return;
     }
 
@@ -1913,18 +1931,18 @@ const server = createServer(async (request, response) => {
       const parts = url.pathname.split('/');
       const ticketId = Number(parts[3]);
       const attachmentId = Number(parts[5]);
-      const attachment = stmtAttachments.byId.get(attachmentId, ticketId);
+      const attachment = await stmtAttachments.byId(attachmentId, ticketId);
       if (!attachment) throw new HttpError(404, 'Attachment not found.');
       await unlink(attachment.storage_path).catch((e) => { if (e.code !== 'ENOENT') console.error('[attachment:delete]', e.message); });
-      stmtAttachments.delete.run(attachmentId, ticketId);
-      logAudit('ticket_attachment', ticketId, 'delete', auth.name, { filename: attachment.filename });
+      await stmtAttachments.delete(attachmentId, ticketId);
+      await logAudit('ticket_attachment', ticketId, 'delete', auth.name, { filename: attachment.filename });
       sendJson(response, 200, { success: true });
       return;
     }
 
     if (request.method === 'GET' && url.pathname === '/api/dashboard') {
       assertRole(auth, 'user');
-      sendJson(response, 200, getDashboardData());
+      sendJson(response, 200, await getDashboardData());
       return;
     }
 
@@ -1947,11 +1965,12 @@ server.listen(PORT, () => {
   console.log(`Ticket app running on http://localhost:${PORT}`);
 });
 
-function gracefulShutdown(signal) {
-  console.log(`${signal} received — checkpointing WAL and closing DB`);
+async function gracefulShutdown(signal) {
+  console.log(`${signal} received — closing MySQL connection`);
   try {
-    db.exec('PRAGMA wal_checkpoint(TRUNCATE);');
-    db.close();
+    if (pool) {
+      await pool.end();
+    }
   } catch (err) {
     console.error('Error during DB shutdown:', err.message);
   }

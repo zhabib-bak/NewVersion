@@ -1,6 +1,6 @@
 # Control Room — Ticket Tracker
 
-A self-hosted operational ticket tracker built with **Node.js 22** and zero npm dependencies. Single-process, single-file server backed by SQLite. Ships with a full-featured SPA frontend.
+A self-hosted operational ticket tracker built with **Node.js 22**. Single-process, single-file server backed by MySQL. Ships with a full-featured SPA frontend.
 
 ## Features
 
@@ -22,8 +22,9 @@ A self-hosted operational ticket tracker built with **Node.js 22** and zero npm 
 
 ## Requirements
 
-- **Node.js 22+** (uses `node:sqlite` built-in — experimental in 22, stable in 23+)
-- No other runtime dependencies
+- **Node.js 22+**
+- **MySQL database server** (tested with MySQL 8.0)
+- **mysql2 npm package** (automatically installed)
 
 ## Quick start
 
@@ -44,7 +45,7 @@ All seed accounts are marked for forced password reset on first login.
 |---|---|---|
 | `PORT` | `3000` | HTTP port |
 | `NODE_ENV` | `development` | Set `production` on live servers |
-| `DATA_DIR` | `./data` | Directory for SQLite DB and secrets |
+| `DATA_DIR` | `./data` | Directory for secrets and uploads |
 | `SESSION_DURATION_HOURS` | `12` | Session lifetime |
 | `TICKET_APP_DEFAULT_PASSWORD` | `ChangeMe!2026` | Initial password for seeded accounts |
 | `WEBHOOK_TIMEOUT_MS` | `5000` | Webhook delivery timeout |
@@ -56,6 +57,11 @@ All seed accounts are marked for forced password reset on first login.
 | `SMTP_FROM` | `Ticket Tracker <no-reply@localhost>` | From address |
 | `SMTP_SECURE` | `false` | `true` for direct TLS (port 465) |
 | `SMTP_REJECT_UNAUTHORIZED` | `true` | Set `false` only for self-signed certs |
+| `DB_HOST` | `localhost` | MySQL database host |
+| `DB_PORT` | `3306` | MySQL database port |
+| `DB_NAME` | `ticket_tracker` | MySQL database name |
+| `DB_USER` | `root` | MySQL database user |
+| `DB_PASS` | | MySQL database password |
 
 ## Deploy
 
@@ -70,6 +76,8 @@ docker run -d \
   --name ticket-tracker \
   ticket-tracker
 ```
+
+**Note:** When using Docker, ensure your MySQL database is accessible from the container. You may need to use the database server's IP address instead of `localhost` for `DB_HOST`.
 
 ### Railway / Render / Fly.io
 
