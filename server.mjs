@@ -50,8 +50,6 @@ const RE_ATTACHMENT_ITEM_PATH = /^\/api\/tickets\/\d+\/attachments\/\d+$/;
 const ROLE_ORDER = { user: 1, manager: 2, admin: 3 };
 const USER_ROLES = Object.keys(ROLE_ORDER);
 const DEFAULT_PASSWORD_MIN_LENGTH = 10;
-const LOGIN_MAX_FAILURES = 5;
-const LOGIN_LOCK_MINUTES = 15;
 
 const SEED_USERS = [
   { name: 'Chandra', role: 'user', active: 1 },
@@ -428,14 +426,28 @@ class HttpError extends Error {
 
 async function ensurePerformanceIndexes() {
   try {
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_manager ON tickets(manager)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_date_opening ON tickets(date_opening)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_batch_id ON tickets(batch_id)');
-    await query('CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id)');
-    await query('CREATE INDEX IF NOT EXISTS idx_saved_filters_user_id ON saved_filters(user_id)');
+    // MySQL doesn't support IF NOT EXISTS for indexes, so we check first
+    const indexes = [
+      { name: 'idx_tickets_status', table: 'tickets', column: 'status' },
+      { name: 'idx_tickets_priority', table: 'tickets', column: 'priority' },
+      { name: 'idx_tickets_assignee', table: 'tickets', column: 'assignee' },
+      { name: 'idx_tickets_manager', table: 'tickets', column: 'manager' },
+      { name: 'idx_tickets_date_opening', table: 'tickets', column: 'date_opening' },
+      { name: 'idx_tickets_batch_id', table: 'tickets', column: 'batch_id' },
+      { name: 'idx_ticket_comments_ticket_id', table: 'ticket_comments', column: 'ticket_id' },
+      { name: 'idx_saved_filters_user_id', table: 'saved_filters', column: 'user_id' }
+    ];
+    
+    for (const index of indexes) {
+      try {
+        await query(`CREATE INDEX ${index.name} ON ${index.table}(${index.column})`);
+      } catch (error) {
+        // Index already exists, continue
+        if (error.code !== 'ER_DUP_KEYNAME') {
+          console.error(`[index-${index.name}]`, error);
+        }
+      }
+    }
   } catch (error) {
     console.error('[indexes]', error);
   }
@@ -1387,7 +1399,7 @@ const server = createServer(async (request, response) => {
   const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method || '');
 
   try {
-    if (isMutation && !url.pathname.startsWith('/api/auth/login')) {
+    if (isMutation && url.pathname && !url.pathname.startsWith('/api/auth/login')) {
       assertCsrf(request, auth);
     }
 
@@ -1553,7 +1565,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'PUT' && url.pathname.startsWith('/api/users/')) {
+    if (request.method === 'PUT' && url.pathname && url.pathname.startsWith('/api/users/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid user id.');
@@ -1569,7 +1581,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/users/')) {
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/users/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid user id.');
@@ -1605,7 +1617,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/views/')) {
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/views/')) {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid view id.');
@@ -1657,7 +1669,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'PUT' && url.pathname.startsWith('/api/webhooks/')) {
+    if (request.method === 'PUT' && url.pathname && url.pathname.startsWith('/api/webhooks/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid webhook id.');
@@ -1683,7 +1695,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/webhooks/')) {
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/webhooks/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid webhook id.');
@@ -1819,7 +1831,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
+    if (request.method === 'GET' && url.pathname && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
@@ -1887,7 +1899,7 @@ const server = createServer(async (request, response) => {
       }
     }
 
-    if (request.method === 'PUT' && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
+    if (request.method === 'PUT' && url.pathname && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
       assertRole(auth, 'user'); // Allow all users to update tickets
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
@@ -1937,7 +1949,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/tickets/')) {
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/tickets/')) {
       assertRole(auth, 'manager'); // Only managers and admins can delete tickets
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');

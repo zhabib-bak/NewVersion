@@ -2226,7 +2226,7 @@ function closeTicketDetail(options = {}) {
   elements.ticketDetail.hidden = true;
   elements.detailNewComment.value = "";
   elements.commentsList.innerHTML = "";
-  if (!preserveHistory && window.location.hash.startsWith("#ticket-")) {
+  if (!preserveHistory && window.location.hash && window.location.hash.startsWith("#ticket-")) {
     history.replaceState(null, "", window.location.pathname + window.location.search);
   }
 }
@@ -2283,6 +2283,7 @@ function renderBadge(text, tone) {
 }
 
 function priorityTone(priority) {
+  if (!priority) return "success";
   if (priority.startsWith("P1")) return "danger";
   if (priority.startsWith("P2")) return "warning";
   return "success";
@@ -2499,6 +2500,12 @@ function updateDarkModeToggle() {
 
 // Professional ApexCharts Functions
 function createInteractiveWeeklyFlowChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+  
   const ctx = document.getElementById('weekly-flow-chart');
   if (!ctx) return;
   
@@ -2613,6 +2620,12 @@ function createInteractiveWeeklyFlowChart(data) {
 }
 
 function createInteractiveLeadTimeChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+  
   const ctx = document.getElementById('lead-time-chart');
   if (!ctx) return;
   
@@ -2702,6 +2715,12 @@ function createInteractiveLeadTimeChart(data) {
 }
 
 function createInteractiveCategoryChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+  
   const ctx = document.getElementById('category-trend-chart');
   if (!ctx) return;
   
@@ -2784,6 +2803,12 @@ function createInteractiveCategoryChart(data) {
 }
 
 function createInteractivePriorityChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+  
   const ctx = document.getElementById('priority-chart');
   if (!ctx) return;
   
@@ -2867,6 +2892,12 @@ function createInteractivePriorityChart(data) {
 }
 
 function createInteractiveAgingChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+  
   const ctx = document.getElementById('aging-buckets-chart');
   if (!ctx) return;
   
