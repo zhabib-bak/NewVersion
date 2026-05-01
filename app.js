@@ -38,7 +38,16 @@ const state = {
   savedSearches: [],
   searchDebounceTimer: null,
   isAdvancedSearchOpen: false,
-  darkMode: false
+  darkMode: false,
+  // Interactive charts
+  charts: {
+    weeklyFlow: null,
+    leadTime: null,
+    categoryTrend: null,
+    priority: null,
+    agingBuckets: null,
+    assigneeWorkload: null
+  }
 };
 
 const elements = {
@@ -392,16 +401,28 @@ async function loadBootstrap() {
 function applyRoleVisibility() {
   const isManagerOrAdmin = state.currentUser && (state.currentUser.role === "manager" || state.currentUser.role === "admin");
   const isAdmin = state.currentUser && state.currentUser.role === "admin";
+  
+  // Allow ALL users to access Data Entry, Tickets Management, and Dashboards
   const entryTab = Array.from(elements.tabButtons).find((button) => button.dataset.tab === "entry");
-  if (entryTab) entryTab.style.display = isManagerOrAdmin ? "" : "none";
-  elements.ticketForm.closest(".panel").style.display = isManagerOrAdmin ? "" : "none";
+  if (entryTab) entryTab.style.display = ""; // Show for all users
+  
+  // Show ticket form for all users (they can create tickets)
+  elements.ticketForm.closest(".panel").style.display = "";
+  
+  // Show manager edit form for managers and admins only
   elements.managerEditForm.closest(".manager-panel").style.display = isManagerOrAdmin ? "" : "none";
+  
+  // RESTRICT Roles and Grants to ADMINS ONLY
   const rolesTab = Array.from(elements.tabButtons).find((button) => button.dataset.tab === "roles");
-  if (rolesTab) rolesTab.style.display = isManagerOrAdmin ? "" : "none";
-  if ((state.activeTab === "roles" || state.activeTab === "entry") && !isManagerOrAdmin) {
+  if (rolesTab) rolesTab.style.display = isAdmin ? "" : "none"; // Only admins can see Roles tab
+  
+  // Redirect non-admins away from Roles tab
+  if (state.activeTab === "roles" && !isAdmin) {
     state.activeTab = "tickets";
     renderTabs();
   }
+  
+  // User form and webhooks remain admin-only
   elements.userForm.style.display = isAdmin ? "" : "none";
   elements.webhookForm.style.display = isAdmin ? "" : "none";
 }
@@ -882,8 +903,12 @@ function renderDashboard() {
   if (atRiskPanel) atRiskPanel.hidden = !(d.atRisk && d.atRisk.length);
   if (atRiskCount && d.atRisk) atRiskCount.textContent = `${d.atRisk.length} ticket${d.atRisk.length !== 1 ? 's' : ''}`;
 
-  // Flow chart + delta badge
-  renderSvgFlowChart(elements.weeklyFlowChart, d.weeklyFlow);
+  // Interactive Flow chart + delta badge
+  createInteractiveWeeklyFlowChart({
+    weeks: d.weeklyFlow?.map(w => w.week) || [],
+    opened: d.weeklyFlow?.map(w => w.opened) || [],
+    closed: d.weeklyFlow?.map(w => w.closed) || []
+  });
   const flowDelta = document.getElementById('flow-net-delta');
   if (flowDelta && d.weeklyFlow && d.weeklyFlow.length) {
     const last = d.weeklyFlow[d.weeklyFlow.length - 1];
@@ -892,10 +917,35 @@ function renderDashboard() {
     flowDelta.className = `net-delta-badge ${delta > 0 ? 'success' : delta < 0 ? 'warning' : 'neutral'}`;
   }
 
-  // Comparison charts
-  renderLeadTimeChart(document.getElementById('lead-time-chart'), d.leadTimeDistribution);
-  renderCategoryChart(document.getElementById('category-trend-chart'), d.openByCategory);
-  renderResolutionSummary(document.getElementById('closed-assignee-chart'), d.totals);
+  // Interactive Comparison charts
+  createInteractiveLeadTimeChart({
+    labels: ['<1d', '1-3d', '3-7d', '7-14d', '>14d'],
+    values: d.leadTimeDistribution || [0, 0, 0, 0, 0]
+  });
+  
+  createInteractiveCategoryChart({
+    labels: d.categoryTrend?.map(c => c.category) || [],
+    values: d.categoryTrend?.map(c => c.count) || []
+  });
+  
+  createInteractivePriorityChart({
+    values: [
+      d.priorityDistribution?.p1 || 0,
+      d.priorityDistribution?.p2 || 0,
+      d.priorityDistribution?.p3 || 0
+    ]
+  });
+  
+  createInteractiveAgingChart({
+    labels: ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'],
+    values: [
+      d.agingBuckets?.['0-2'] || 0,
+      d.agingBuckets?.['3-7'] || 0,
+      d.agingBuckets?.['8-14'] || 0,
+      d.agingBuckets?.['15-30'] || 0,
+      d.agingBuckets?.['>30'] || 0
+    ]
+  });
 
   // Workload table
   renderWorkloadTable(document.getElementById('workload-table'), d.workload);
@@ -2425,6 +2475,7 @@ function toggleDarkMode() {
   document.body.classList.toggle('dark-mode', state.darkMode);
   localStorage.setItem('darkMode', state.darkMode);
   updateDarkModeToggle();
+  updateChartsTheme();
 }
 
 function loadUserPreferences() {
@@ -2444,5 +2495,375 @@ function updateDarkModeToggle() {
   if (!elements.darkModeToggle) return;
   elements.darkModeToggle.textContent = state.darkMode ? '🌙' : '☀️';
   elements.darkModeToggle.title = state.darkMode ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+// Interactive Chart.js Functions
+function createInteractiveWeeklyFlowChart(data) {
+  const ctx = document.getElementById('weekly-flow-chart');
+  if (!ctx) return;
+  
+  // Destroy existing chart if it exists
+  if (state.charts.weeklyFlow) {
+    state.charts.weeklyFlow.destroy();
+  }
+  
+  const chartData = {
+    labels: data.weeks || [],
+    datasets: [
+      {
+        label: 'Opened',
+        data: data.opened || [],
+        borderColor: state.darkMode ? '#4ecdc4' : '#32b48d',
+        backgroundColor: state.darkMode ? 'rgba(78, 205, 196, 0.1)' : 'rgba(50, 180, 141, 0.1)',
+        borderWidth: 2,
+        tension: 0.4,
+        fill: true
+      },
+      {
+        label: 'Closed',
+        data: data.closed || [],
+        borderColor: state.darkMode ? '#74b9ff' : '#6c8db7',
+        backgroundColor: state.darkMode ? 'rgba(116, 185, 255, 0.1)' : 'rgba(108, 141, 183, 0.1)',
+        borderWidth: 2,
+        tension: 0.4,
+        fill: true
+      }
+    ]
+  };
+  
+  state.charts.weeklyFlow = new Chart(ctx, {
+    type: 'line',
+    data: chartData,
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top',
+          labels: {
+            color: getComputedStyle(document.body).getPropertyValue('--text'),
+            usePointStyle: true,
+            padding: 20
+          }
+        },
+        tooltip: {
+          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
+          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
+          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
+          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+          borderWidth: 1,
+          padding: 12,
+          displayColors: true,
+          callbacks: {
+            label: function(context) {
+              return context.dataset.label + ': ' + context.parsed.y + ' tickets';
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: {
+            color: getComputedStyle(document.body).getPropertyValue('--border'),
+            drawBorder: false
+          },
+          ticks: {
+            color: getComputedStyle(document.body).getPropertyValue('--muted')
+          }
+        },
+        y: {
+          beginAtZero: true,
+          grid: {
+            color: getComputedStyle(document.body).getPropertyValue('--border'),
+            drawBorder: false
+          },
+          ticks: {
+            color: getComputedStyle(document.body).getPropertyValue('--muted'),
+            precision: 0
+          }
+        }
+      }
+    }
+  });
+}
+
+function createInteractiveLeadTimeChart(data) {
+  const ctx = document.getElementById('lead-time-chart');
+  if (!ctx) return;
+  
+  if (state.charts.leadTime) {
+    state.charts.leadTime.destroy();
+  }
+  
+  state.charts.leadTime = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.labels || ['<1d', '1-3d', '3-7d', '7-14d', '>14d'],
+      datasets: [{
+        label: 'Tickets',
+        data: data.values || [],
+        backgroundColor: [
+          state.darkMode ? '#6bcf7f' : '#4ed4a8',
+          state.darkMode ? '#4ecdc4' : '#32b48d',
+          state.darkMode ? '#ffd93d' : '#ffb347',
+          state.darkMode ? '#ff9f43' : '#ff8c42',
+          state.darkMode ? '#ff6b6b' : '#ff6b5f'
+        ],
+        borderColor: state.darkMode ? '#1a1a1a' : '#0f1722',
+        borderWidth: 1,
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
+          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
+          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
+          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+          borderWidth: 1,
+          padding: 12,
+          callbacks: {
+            label: function(context) {
+              return 'Tickets: ' + context.parsed.y;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: {
+            display: false
+          },
+          ticks: {
+            color: getComputedStyle(document.body).getPropertyValue('--muted')
+          }
+        },
+        y: {
+          beginAtZero: true,
+          grid: {
+            color: getComputedStyle(document.body).getPropertyValue('--border'),
+            drawBorder: false
+          },
+          ticks: {
+            color: getComputedStyle(document.body).getPropertyValue('--muted'),
+            precision: 0
+          }
+        }
+      }
+    }
+  });
+}
+
+function createInteractiveCategoryChart(data) {
+  const ctx = document.getElementById('category-trend-chart');
+  if (!ctx) return;
+  
+  if (state.charts.categoryTrend) {
+    state.charts.categoryTrend.destroy();
+  }
+  
+  state.charts.categoryTrend = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: data.labels || [],
+      datasets: [{
+        data: data.values || [],
+        backgroundColor: [
+          state.darkMode ? '#4ecdc4' : '#32b48d',
+          state.darkMode ? '#74b9ff' : '#6c8db7',
+          state.darkMode ? '#ffd93d' : '#ffb347',
+          state.darkMode ? '#ff6b6b' : '#ff6b5f',
+          state.darkMode ? '#a29bfe' : '#8b7cc7',
+          state.darkMode ? '#fd79a8' : '#fd79a8'
+        ],
+        borderColor: state.darkMode ? '#2d2d2d' : '#0f1722',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            color: getComputedStyle(document.body).getPropertyValue('--text'),
+            padding: 15,
+            usePointStyle: true
+          }
+        },
+        tooltip: {
+          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
+          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
+          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
+          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+          borderWidth: 1,
+          padding: 12,
+          callbacks: {
+            label: function(context) {
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = ((context.parsed / total) * 100).toFixed(1);
+              return context.label + ': ' + context.parsed + ' (' + percentage + '%)';
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+function createInteractivePriorityChart(data) {
+  const ctx = document.getElementById('priority-chart');
+  if (!ctx) return;
+  
+  if (state.charts.priority) {
+    state.charts.priority.destroy();
+  }
+  
+  state.charts.priority = new Chart(ctx, {
+    type: 'polarArea',
+    data: {
+      labels: ['P1 High', 'P2 Medium', 'P3 Low'],
+      datasets: [{
+        data: data.values || [0, 0, 0],
+        backgroundColor: [
+          state.darkMode ? 'rgba(255, 107, 107, 0.7)' : 'rgba(255, 107, 95, 0.7)',
+          state.darkMode ? 'rgba(255, 217, 61, 0.7)' : 'rgba(255, 179, 71, 0.7)',
+          state.darkMode ? 'rgba(107, 207, 127, 0.7)' : 'rgba(78, 212, 168, 0.7)'
+        ],
+        borderColor: [
+          state.darkMode ? '#ff6b6b' : '#ff6b5f',
+          state.darkMode ? '#ffd93d' : '#ffb347',
+          state.darkMode ? '#6bcf7f' : '#4ed4a8'
+        ],
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            color: getComputedStyle(document.body).getPropertyValue('--text'),
+            padding: 15,
+            usePointStyle: true
+          }
+        },
+        tooltip: {
+          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
+          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
+          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
+          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+          borderWidth: 1,
+          padding: 12,
+          callbacks: {
+            label: function(context) {
+              return context.label + ': ' + context.parsed + ' tickets';
+            }
+          }
+        }
+      },
+      scales: {
+        r: {
+          grid: {
+            color: getComputedStyle(document.body).getPropertyValue('--border')
+          },
+          ticks: {
+            color: getComputedStyle(document.body).getPropertyValue('--muted'),
+            backdropColor: 'transparent'
+          }
+        }
+      }
+    }
+  });
+}
+
+function createInteractiveAgingChart(data) {
+  const ctx = document.getElementById('aging-buckets-chart');
+  if (!ctx) return;
+  
+  if (state.charts.agingBuckets) {
+    state.charts.agingBuckets.destroy();
+  }
+  
+  state.charts.agingBuckets = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: data.labels || ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'],
+      datasets: [{
+        label: 'Open Tickets',
+        data: data.values || [],
+        backgroundColor: state.darkMode ? '#4ecdc4' : '#32b48d',
+        borderColor: state.darkMode ? '#2d2d2d' : '#0f1722',
+        borderWidth: 1,
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: 'y',
+      plugins: {
+        legend: {
+          display: false
+        },
+        tooltip: {
+          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
+          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
+          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
+          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+          borderWidth: 1,
+          padding: 12,
+          callbacks: {
+            label: function(context) {
+              return 'Open tickets: ' + context.parsed.x;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          grid: {
+            color: getComputedStyle(document.body).getPropertyValue('--border'),
+            drawBorder: false
+          },
+          ticks: {
+            color: getComputedStyle(document.body).getPropertyValue('--muted'),
+            precision: 0
+          }
+        },
+        y: {
+          grid: {
+            display: false
+          },
+          ticks: {
+            color: getComputedStyle(document.body).getPropertyValue('--muted')
+          }
+        }
+      }
+    }
+  });
+}
+
+// Update all charts when dark mode changes
+function updateChartsTheme() {
+  // Re-render all charts with new theme
+  if (state.dashboard) {
+    renderDashboard();
+  }
 }
 

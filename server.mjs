@@ -1395,33 +1395,72 @@ const server = createServer(async (request, response) => {
       const payload = await readRequestBody(request);
       const name = String(payload.name || '').trim();
       const password = String(payload.password || '').trim();
+      
+      if (!name || !password) {
+        throw new HttpError(400, 'User name and password are required.');
+      }
+      
       const user = await stmtUsers.byName(name);
       if (!user || user.active !== 1) {
         throw new HttpError(401, 'Invalid credentials.');
       }
+      
+      // Check if account is locked
       if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
-        throw new HttpError(423, 'Account temporarily locked. Please try again later.');
+        const lockTimeLeft = Math.ceil((Date.parse(user.locked_until) - Date.now()) / 60000);
+        throw new HttpError(423, `Account temporarily locked. Please try again in ${lockTimeLeft} minutes.`);
       }
+      
       const validModern = verifyPassword(password, user.auth_secret_hash);
       const validLegacy = !validModern && !!user.auth_pin_hash && user.auth_pin_hash === hashLegacyPin(password);
+      
       if (!validModern && !validLegacy) {
         const failures = Number(user.failed_login_attempts || 0) + 1;
         const lockedUntil = failures >= LOGIN_MAX_FAILURES ? new Date(Date.now() + LOGIN_LOCK_MINUTES * 60_000).toISOString() : null;
-        await stmtUsers.loginFail(failures, lockedUntil, user.id);
-        throw new HttpError(401, failures >= LOGIN_MAX_FAILURES ? 'Account temporarily locked after repeated failed logins.' : 'Invalid credentials.');
+        
+        try {
+          await stmtUsers.loginFail(failures, lockedUntil, user.id);
+        } catch (error) {
+          console.error('[login-fail-update]', error);
+          // Continue with login failure even if update fails
+        }
+        
+        const remainingAttempts = LOGIN_MAX_FAILURES - failures;
+        if (failures >= LOGIN_MAX_FAILURES) {
+          throw new HttpError(423, `Account temporarily locked for ${LOGIN_LOCK_MINUTES} minutes after ${LOGIN_MAX_FAILURES} failed login attempts.`);
+        } else {
+          throw new HttpError(401, `Invalid credentials. ${remainingAttempts} attempts remaining.`);
+        }
       }
-      await stmtUsers.resetLoginFailures(user.id);
+      
+      // Successful login - reset failed attempts
+      try {
+        await stmtUsers.resetLoginFailures(user.id);
+      } catch (error) {
+        console.error('[login-reset-failures]', error);
+        // Continue with login even if reset fails
+      }
+      
+      // Upgrade legacy password hash if needed
       if (validLegacy) {
-        await stmtUsers.setSecret(hashPassword(password), 1, user.id);
+        try {
+          await stmtUsers.setSecret(hashPassword(password), 1, user.id);
+        } catch (error) {
+          console.error('[password-upgrade]', error);
+          // Continue with login even if upgrade fails
+        }
       }
+      
       const refreshedUser = await stmtUsers.byId(user.id);
       const remember = !!payload.remember;
       const sessionId = randomUUID();
       const csrf = randomBytes(24).toString('hex');
       const durationMs = remember ? REMEMBER_ME_DAYS * 24 * 3600 * 1000 : SESSION_DURATION_MS;
       const expiresAt = new Date(Date.now() + durationMs).toISOString();
+      
       await stmtSessions.insert(sessionId, refreshedUser.id, csrf, expiresAt);
       await logAudit('session', refreshedUser.id, 'login', refreshedUser.name, { ip });
+      
       const cookieMaxAge = remember ? REMEMBER_ME_DAYS * 24 * 3600 : null;
       sendJson(
         response,
@@ -1817,42 +1856,75 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && url.pathname === '/api/tickets') {
-      assertRole(auth, 'manager');
+      assertRole(auth, 'user'); // Allow all users to create tickets
       const payload = await normalizeTicketInput(await readRequestBody(request));
       const due = calculateDueDate(payload.date_opening, payload.priority);
-      await stmtTickets.insert(
-        payload.description,
-        payload.jd_ticket_number,
-        payload.category,
-        payload.updates_comments,
-        payload.priority,
-        payload.date_opening,
-        payload.date_closed,
-        payload.status,
-        payload.assignee,
-        payload.manager,
-        due
-      );
-      const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = '${payload.jd_ticket_number}'`);
-      const row = newTicket[0];
-      if (payload.updates_comments) await stmtComments.insert(row.id, payload.assignee, 'Update', payload.updates_comments);
-      const ticket = await hydrateTicket(row);
-      await logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
-      await emitWebhooks('ticket.created', ticket);
-      const assigneeEmail = await getUserEmail(ticket.assignee);
-      if (assigneeEmail) {
-        sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      
+      // Check for duplicate ticket number first
+      const existing = await stmtTickets.listBase(`WHERE jd_ticket_number = ?`, [payload.jd_ticket_number]);
+      if (existing.length > 0) {
+        throw new HttpError(409, `Ticket with number ${payload.jd_ticket_number} already exists.`);
       }
-      sendJson(response, 201, { ticket });
-      return;
+      
+      // Insert the ticket with proper error handling
+      try {
+        await stmtTickets.insert(
+          payload.description,
+          payload.jd_ticket_number,
+          payload.category,
+          payload.updates_comments,
+          payload.priority,
+          payload.date_opening,
+          payload.date_closed,
+          payload.status,
+          payload.assignee,
+          payload.manager,
+          due
+        );
+        
+        // Get the newly created ticket
+        const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = ?`, [payload.jd_ticket_number]);
+        if (!newTicket.length) {
+          throw new HttpError(500, 'Failed to retrieve created ticket.');
+        }
+        
+        const row = newTicket[0];
+        if (payload.updates_comments) {
+          await stmtComments.insert(row.id, payload.assignee, 'Update', payload.updates_comments);
+        }
+        
+        const ticket = await hydrateTicket(row);
+        await logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
+        await emitWebhooks('ticket.created', ticket);
+        
+        const assigneeEmail = await getUserEmail(ticket.assignee);
+        if (assigneeEmail) {
+          sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+        }
+        
+        sendJson(response, 201, { ticket });
+        return;
+      } catch (error) {
+        console.error('[ticket-creation]', error);
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        throw new HttpError(500, 'Failed to create ticket. Please try again.');
+      }
     }
 
     if (request.method === 'PUT' && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
-      assertRole(auth, 'manager');
+      assertRole(auth, 'user'); // Allow all users to update tickets
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
       const current = await stmtTickets.byId(id);
       if (!current) throw new HttpError(404, 'Ticket not found.');
+      
+      // Users can only update tickets they are assigned to, managers can update any
+      if (auth.role !== 'manager' && auth.role !== 'admin' && current.assignee !== auth.name) {
+        throw new HttpError(403, 'You can only update tickets assigned to you.');
+      }
+      
       const payload = await normalizeTicketInput(await readRequestBody(request));
       validateStatusTransition(current.status, payload.status, auth.role);
       const dueDate = calculateDueDate(payload.date_opening, payload.priority);
@@ -1892,7 +1964,7 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'DELETE' && url.pathname.startsWith('/api/tickets/')) {
-      assertRole(auth, 'manager');
+      assertRole(auth, 'manager'); // Only managers and admins can delete tickets
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
       const exists = await stmtTickets.byId(id);
@@ -1962,7 +2034,7 @@ const server = createServer(async (request, response) => {
 
     // DELETE /api/tickets/:id/attachments/:attachmentId
     if (request.method === 'DELETE' && RE_ATTACHMENT_ITEM_PATH.test(url.pathname)) {
-      assertRole(auth, 'manager');
+      assertRole(auth, 'manager'); // Only managers and admins can delete attachments
       const parts = url.pathname.split('/');
       const ticketId = Number(parts[3]);
       const attachmentId = Number(parts[5]);
