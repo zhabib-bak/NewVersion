@@ -1405,40 +1405,14 @@ const server = createServer(async (request, response) => {
         throw new HttpError(401, 'Invalid credentials.');
       }
       
-      // Check if account is locked
-      if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
-        const lockTimeLeft = Math.ceil((Date.parse(user.locked_until) - Date.now()) / 60000);
-        throw new HttpError(423, `Account temporarily locked. Please try again in ${lockTimeLeft} minutes.`);
-      }
-      
+      // NO MORE ACCOUNT LOCKING - Remove all lockout logic
       const validModern = verifyPassword(password, user.auth_secret_hash);
       const validLegacy = !validModern && !!user.auth_pin_hash && user.auth_pin_hash === hashLegacyPin(password);
       
       if (!validModern && !validLegacy) {
-        const failures = Number(user.failed_login_attempts || 0) + 1;
-        const lockedUntil = failures >= LOGIN_MAX_FAILURES ? new Date(Date.now() + LOGIN_LOCK_MINUTES * 60_000).toISOString() : null;
-        
-        try {
-          await stmtUsers.loginFail(failures, lockedUntil, user.id);
-        } catch (error) {
-          console.error('[login-fail-update]', error);
-          // Continue with login failure even if update fails
-        }
-        
-        const remainingAttempts = LOGIN_MAX_FAILURES - failures;
-        if (failures >= LOGIN_MAX_FAILURES) {
-          throw new HttpError(423, `Account temporarily locked for ${LOGIN_LOCK_MINUTES} minutes after ${LOGIN_MAX_FAILURES} failed login attempts.`);
-        } else {
-          throw new HttpError(401, `Invalid credentials. ${remainingAttempts} attempts remaining.`);
-        }
-      }
-      
-      // Successful login - reset failed attempts
-      try {
-        await stmtUsers.resetLoginFailures(user.id);
-      } catch (error) {
-        console.error('[login-reset-failures]', error);
-        // Continue with login even if reset fails
+        // Just log the failed attempt without blocking
+        console.log(`[login-failed] User: ${name}, IP: ${ip}`);
+        throw new HttpError(401, 'Invalid credentials.');
       }
       
       // Upgrade legacy password hash if needed

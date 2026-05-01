@@ -39,7 +39,7 @@ const state = {
   searchDebounceTimer: null,
   isAdvancedSearchOpen: false,
   darkMode: false,
-  // Interactive charts
+  // Interactive charts with ApexCharts
   charts: {
     weeklyFlow: null,
     leadTime: null,
@@ -2497,7 +2497,7 @@ function updateDarkModeToggle() {
   elements.darkModeToggle.title = state.darkMode ? 'Switch to light mode' : 'Switch to dark mode';
 }
 
-// Interactive Chart.js Functions
+// Professional ApexCharts Functions
 function createInteractiveWeeklyFlowChart(data) {
   const ctx = document.getElementById('weekly-flow-chart');
   if (!ctx) return;
@@ -2507,89 +2507,109 @@ function createInteractiveWeeklyFlowChart(data) {
     state.charts.weeklyFlow.destroy();
   }
   
-  const chartData = {
-    labels: data.weeks || [],
-    datasets: [
+  const options = {
+    series: [
       {
-        label: 'Opened',
-        data: data.opened || [],
-        borderColor: state.darkMode ? '#4ecdc4' : '#32b48d',
-        backgroundColor: state.darkMode ? 'rgba(78, 205, 196, 0.1)' : 'rgba(50, 180, 141, 0.1)',
-        borderWidth: 2,
-        tension: 0.4,
-        fill: true
+        name: 'Opened',
+        data: data.opened || []
       },
       {
-        label: 'Closed',
-        data: data.closed || [],
-        borderColor: state.darkMode ? '#74b9ff' : '#6c8db7',
-        backgroundColor: state.darkMode ? 'rgba(116, 185, 255, 0.1)' : 'rgba(108, 141, 183, 0.1)',
-        borderWidth: 2,
-        tension: 0.4,
-        fill: true
+        name: 'Closed',
+        data: data.closed || []
       }
-    ]
+    ],
+    chart: {
+      type: 'area',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true,
+          selection: true,
+          zoom: true,
+          zoomin: true,
+          zoomout: true,
+          pan: true,
+          reset: true
+        }
+      },
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800,
+        animateGradually: {
+          enabled: true,
+          delay: 150
+        },
+        dynamicAnimation: {
+          enabled: true,
+          speed: 350
+        }
+      }
+    },
+    colors: ['#4ecdc4', '#74b9ff'],
+    fill: {
+      type: 'gradient',
+      gradient: {
+        shadeIntensity: 1,
+        opacityFrom: 0.7,
+        opacityTo: 0.3,
+        stops: [0, 90, 100]
+      }
+    },
+    dataLabels: {
+      enabled: false
+    },
+    stroke: {
+      curve: 'smooth',
+      width: 3
+    },
+    xaxis: {
+      categories: data.weeks || [],
+      labels: {
+        style: {
+          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      }
+    },
+    yaxis: {
+      title: {
+        text: 'Tickets',
+        style: {
+          color: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      },
+      labels: {
+        style: {
+          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      x: {
+        format: 'MMM dd, yyyy'
+      },
+      y: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    legend: {
+      position: 'top',
+      labels: {
+        colors: getComputedStyle(document.body).getPropertyValue('--text')
+      }
+    },
+    grid: {
+      borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+      strokeDashArray: 4
+    }
   };
   
-  state.charts.weeklyFlow = new Chart(ctx, {
-    type: 'line',
-    data: chartData,
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: {
-        mode: 'index',
-        intersect: false
-      },
-      plugins: {
-        legend: {
-          display: true,
-          position: 'top',
-          labels: {
-            color: getComputedStyle(document.body).getPropertyValue('--text'),
-            usePointStyle: true,
-            padding: 20
-          }
-        },
-        tooltip: {
-          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
-          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
-          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
-          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
-          borderWidth: 1,
-          padding: 12,
-          displayColors: true,
-          callbacks: {
-            label: function(context) {
-              return context.dataset.label + ': ' + context.parsed.y + ' tickets';
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          grid: {
-            color: getComputedStyle(document.body).getPropertyValue('--border'),
-            drawBorder: false
-          },
-          ticks: {
-            color: getComputedStyle(document.body).getPropertyValue('--muted')
-          }
-        },
-        y: {
-          beginAtZero: true,
-          grid: {
-            color: getComputedStyle(document.body).getPropertyValue('--border'),
-            drawBorder: false
-          },
-          ticks: {
-            color: getComputedStyle(document.body).getPropertyValue('--muted'),
-            precision: 0
-          }
-        }
-      }
-    }
-  });
+  state.charts.weeklyFlow = new ApexCharts(ctx, options);
+  state.charts.weeklyFlow.render();
 }
 
 function createInteractiveLeadTimeChart(data) {
@@ -2600,69 +2620,85 @@ function createInteractiveLeadTimeChart(data) {
     state.charts.leadTime.destroy();
   }
   
-  state.charts.leadTime = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: data.labels || ['<1d', '1-3d', '3-7d', '7-14d', '>14d'],
-      datasets: [{
-        label: 'Tickets',
-        data: data.values || [],
-        backgroundColor: [
-          state.darkMode ? '#6bcf7f' : '#4ed4a8',
-          state.darkMode ? '#4ecdc4' : '#32b48d',
-          state.darkMode ? '#ffd93d' : '#ffb347',
-          state.darkMode ? '#ff9f43' : '#ff8c42',
-          state.darkMode ? '#ff6b6b' : '#ff6b5f'
-        ],
-        borderColor: state.darkMode ? '#1a1a1a' : '#0f1722',
-        borderWidth: 1,
-        borderRadius: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          display: false
-        },
-        tooltip: {
-          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
-          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
-          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
-          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
-          borderWidth: 1,
-          padding: 12,
-          callbacks: {
-            label: function(context) {
-              return 'Tickets: ' + context.parsed.y;
-            }
-          }
+  const options = {
+    series: [{
+      name: 'Resolution Time',
+      data: data.values || []
+    }],
+    chart: {
+      type: 'bar',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
         }
       },
-      scales: {
-        x: {
-          grid: {
-            display: false
-          },
-          ticks: {
-            color: getComputedStyle(document.body).getPropertyValue('--muted')
-          }
-        },
-        y: {
-          beginAtZero: true,
-          grid: {
-            color: getComputedStyle(document.body).getPropertyValue('--border'),
-            drawBorder: false
-          },
-          ticks: {
-            color: getComputedStyle(document.body).getPropertyValue('--muted'),
-            precision: 0
-          }
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800
+      }
+    },
+    colors: ['#6bcf7f', '#4ecdc4', '#ffd93d', '#ff9f43', '#ff6b6b'],
+    plotOptions: {
+      bar: {
+        borderRadius: 8,
+        horizontal: false,
+        distributed: true,
+        dataLabels: {
+          position: 'top'
         }
       }
+    },
+    dataLabels: {
+      enabled: true,
+      formatter: function(val) {
+        return val + ' tickets';
+      },
+      offsetY: -20,
+      style: {
+        fontSize: '12px',
+        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
+      }
+    },
+    xaxis: {
+      categories: data.labels || ['<1d', '1-3d', '3-7d', '7-14d', '>14d'],
+      labels: {
+        style: {
+          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      }
+    },
+    yaxis: {
+      title: {
+        text: 'Tickets',
+        style: {
+          color: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      },
+      labels: {
+        style: {
+          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      y: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    grid: {
+      borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+      strokeDashArray: 4
     }
-  });
+  };
+  
+  state.charts.leadTime = new ApexCharts(ctx, options);
+  state.charts.leadTime.render();
 }
 
 function createInteractiveCategoryChart(data) {
@@ -2673,54 +2709,78 @@ function createInteractiveCategoryChart(data) {
     state.charts.categoryTrend.destroy();
   }
   
-  state.charts.categoryTrend = new Chart(ctx, {
-    type: 'doughnut',
-    data: {
-      labels: data.labels || [],
-      datasets: [{
-        data: data.values || [],
-        backgroundColor: [
-          state.darkMode ? '#4ecdc4' : '#32b48d',
-          state.darkMode ? '#74b9ff' : '#6c8db7',
-          state.darkMode ? '#ffd93d' : '#ffb347',
-          state.darkMode ? '#ff6b6b' : '#ff6b5f',
-          state.darkMode ? '#a29bfe' : '#8b7cc7',
-          state.darkMode ? '#fd79a8' : '#fd79a8'
-        ],
-        borderColor: state.darkMode ? '#2d2d2d' : '#0f1722',
-        borderWidth: 2
-      }]
+  const options = {
+    series: data.values || [],
+    chart: {
+      type: 'donut',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
+        }
+      },
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800,
+        animateGradually: {
+          enabled: true,
+          delay: 150
+        }
+      }
     },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'bottom',
+    colors: ['#4ecdc4', '#74b9ff', '#ffd93d', '#ff6b6b', '#a29bfe', '#fd79a8'],
+    labels: data.labels || [],
+    dataLabels: {
+      enabled: true,
+      formatter: function(val, opt) {
+        return val + ' tickets';
+      },
+      style: {
+        fontSize: '12px',
+        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
+      }
+    },
+    plotOptions: {
+      pie: {
+        donut: {
+          size: '70%',
           labels: {
-            color: getComputedStyle(document.body).getPropertyValue('--text'),
-            padding: 15,
-            usePointStyle: true
-          }
-        },
-        tooltip: {
-          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
-          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
-          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
-          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
-          borderWidth: 1,
-          padding: 12,
-          callbacks: {
-            label: function(context) {
-              const total = context.dataset.data.reduce((a, b) => a + b, 0);
-              const percentage = ((context.parsed / total) * 100).toFixed(1);
-              return context.label + ': ' + context.parsed + ' (' + percentage + '%)';
+            show: true,
+            total: {
+              show: true,
+              showAlways: true,
+              label: 'Total',
+              fontSize: '16px',
+              fontFamily: 'Helvetica, Arial, sans-serif',
+              fontWeight: 600,
+              color: getComputedStyle(document.body).getPropertyValue('--text')
             }
           }
         }
       }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      y: {
+        formatter: function(value, { seriesIndex, dataPointIndex, w }) {
+          const total = series.reduce((a, b) => a + b, 0);
+          const percentage = ((value / total) * 100).toFixed(1);
+          return value + ' tickets (' + percentage + '%)';
+        }
+      }
+    },
+    legend: {
+      position: 'bottom',
+      labels: {
+        colors: getComputedStyle(document.body).getPropertyValue('--text')
+      }
     }
-  });
+  };
+  
+  state.charts.categoryTrend = new ApexCharts(ctx, options);
+  state.charts.categoryTrend.render();
 }
 
 function createInteractivePriorityChart(data) {
@@ -2731,64 +2791,79 @@ function createInteractivePriorityChart(data) {
     state.charts.priority.destroy();
   }
   
-  state.charts.priority = new Chart(ctx, {
-    type: 'polarArea',
-    data: {
-      labels: ['P1 High', 'P2 Medium', 'P3 Low'],
-      datasets: [{
-        data: data.values || [0, 0, 0],
-        backgroundColor: [
-          state.darkMode ? 'rgba(255, 107, 107, 0.7)' : 'rgba(255, 107, 95, 0.7)',
-          state.darkMode ? 'rgba(255, 217, 61, 0.7)' : 'rgba(255, 179, 71, 0.7)',
-          state.darkMode ? 'rgba(107, 207, 127, 0.7)' : 'rgba(78, 212, 168, 0.7)'
-        ],
-        borderColor: [
-          state.darkMode ? '#ff6b6b' : '#ff6b5f',
-          state.darkMode ? '#ffd93d' : '#ffb347',
-          state.darkMode ? '#6bcf7f' : '#4ed4a8'
-        ],
-        borderWidth: 2
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: 'bottom',
-          labels: {
-            color: getComputedStyle(document.body).getPropertyValue('--text'),
-            padding: 15,
-            usePointStyle: true
-          }
-        },
-        tooltip: {
-          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
-          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
-          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
-          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
-          borderWidth: 1,
-          padding: 12,
-          callbacks: {
-            label: function(context) {
-              return context.label + ': ' + context.parsed + ' tickets';
-            }
-          }
+  const options = {
+    series: data.values || [0, 0, 0],
+    chart: {
+      type: 'radar',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
         }
       },
-      scales: {
-        r: {
-          grid: {
-            color: getComputedStyle(document.body).getPropertyValue('--border')
-          },
-          ticks: {
-            color: getComputedStyle(document.body).getPropertyValue('--muted'),
-            backdropColor: 'transparent'
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800
+      }
+    },
+    colors: ['#ff6b6b', '#ffd93d', '#6bcf7f'],
+    labels: ['P1 High', 'P2 Medium', 'P3 Low'],
+    dataLabels: {
+      enabled: true,
+      formatter: function(val) {
+        return val + ' tickets';
+      },
+      style: {
+        fontSize: '11px',
+        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
+      }
+    },
+    plotOptions: {
+      radar: {
+        size: 120,
+        polygons: {
+          strokeColors: getComputedStyle(document.body).getPropertyValue('--border'),
+          connectorColors: getComputedStyle(document.body).getPropertyValue('--border'),
+          fill: {
+            colors: [state.darkMode ? 'rgba(78, 205, 196, 0.1)' : 'rgba(50, 180, 141, 0.1)']
           }
         }
       }
+    },
+    stroke: {
+      show: true,
+      width: 3,
+      colors: ['#ff6b6b', '#ffd93d', '#6bcf7f']
+    },
+    fill: {
+      opacity: 0.8
+    },
+    markers: {
+      size: 5,
+      colors: ['#ff6b6b', '#ffd93d', '#6bcf7f'],
+      strokeColors: state.darkMode ? '#2d2d2d' : '#0f1722',
+      strokeWidth: 2
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      y: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    legend: {
+      position: 'bottom',
+      labels: {
+        colors: getComputedStyle(document.body).getPropertyValue('--text')
+      }
     }
-  });
+  };
+  
+  state.charts.priority = new ApexCharts(ctx, options);
+  state.charts.priority.render();
 }
 
 function createInteractiveAgingChart(data) {
@@ -2799,64 +2874,83 @@ function createInteractiveAgingChart(data) {
     state.charts.agingBuckets.destroy();
   }
   
-  state.charts.agingBuckets = new Chart(ctx, {
-    type: 'bar',
-    data: {
-      labels: data.labels || ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'],
-      datasets: [{
-        label: 'Open Tickets',
-        data: data.values || [],
-        backgroundColor: state.darkMode ? '#4ecdc4' : '#32b48d',
-        borderColor: state.darkMode ? '#2d2d2d' : '#0f1722',
-        borderWidth: 1,
-        borderRadius: 4
-      }]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: 'y',
-      plugins: {
-        legend: {
-          display: false
-        },
-        tooltip: {
-          backgroundColor: getComputedStyle(document.body).getPropertyValue('--panel-bg'),
-          titleColor: getComputedStyle(document.body).getPropertyValue('--text'),
-          bodyColor: getComputedStyle(document.body).getPropertyValue('--muted'),
-          borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
-          borderWidth: 1,
-          padding: 12,
-          callbacks: {
-            label: function(context) {
-              return 'Open tickets: ' + context.parsed.x;
-            }
-          }
+  const options = {
+    series: [{
+      name: 'Open Tickets',
+      data: data.values || []
+    }],
+    chart: {
+      type: 'bar',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
         }
       },
-      scales: {
-        x: {
-          beginAtZero: true,
-          grid: {
-            color: getComputedStyle(document.body).getPropertyValue('--border'),
-            drawBorder: false
-          },
-          ticks: {
-            color: getComputedStyle(document.body).getPropertyValue('--muted'),
-            precision: 0
-          }
-        },
-        y: {
-          grid: {
-            display: false
-          },
-          ticks: {
-            color: getComputedStyle(document.body).getPropertyValue('--muted')
-          }
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800
+      }
+    },
+    colors: ['#4ecdc4'],
+    plotOptions: {
+      bar: {
+        borderRadius: 8,
+        horizontal: true,
+        dataLabels: {
+          position: 'right'
         }
       }
+    },
+    dataLabels: {
+      enabled: true,
+      formatter: function(val) {
+        return val + ' tickets';
+      },
+      style: {
+        fontSize: '12px',
+        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
+      }
+    },
+    xaxis: {
+      categories: data.labels || ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'],
+      labels: {
+        style: {
+          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      }
+    },
+    yaxis: {
+      title: {
+        text: 'Age Range',
+        style: {
+          color: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      },
+      labels: {
+        style: {
+          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+        }
+      }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      x: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    grid: {
+      borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+      strokeDashArray: 4
     }
-  });
+  };
+  
+  state.charts.agingBuckets = new ApexCharts(ctx, options);
+  state.charts.agingBuckets.render();
 }
 
 // Update all charts when dark mode changes
