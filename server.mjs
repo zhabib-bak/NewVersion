@@ -422,8 +422,8 @@ const stmtAttachments = {
   delete: async (id, ticket_id) => await query('DELETE FROM ticket_attachments WHERE id = ? AND ticket_id = ?', [id, ticket_id])
 };
 
-seedUsers();
-seedTicketsAndComments();
+await seedUsers();
+await seedTicketsAndComments();
 createBackupSnapshot().catch((error) => console.error('[backup]', error));
 ensurePerformanceIndexes();
 
