@@ -492,7 +492,8 @@ async function bootstrapDataStore() {
 }
 
 async function loadOrCreateEncryptionKey() {
-  const keyPath = join(DATA_DIR, '.app-secrets.json');
+  const currentDataDir = process.env.DATA_DIR || DATA_DIR;
+  const keyPath = join(currentDataDir, '.app-secrets.json');
   try {
     const raw = await readFile(keyPath, 'utf8');
     const parsed = JSON.parse(raw);
