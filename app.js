@@ -2503,15 +2503,26 @@ function createInteractiveWeeklyFlowChart(data) {
     console.error('ApexCharts is not loaded');
     return;
   }
-  
+
   const ctx = document.getElementById('weekly-flow-chart');
   if (!ctx) return;
-  
-  // Destroy existing chart if it exists
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
   if (state.charts.weeklyFlow) {
-    state.charts.weeklyFlow.destroy();
+    state.charts.weeklyFlow.updateSeries([
+      { name: 'Opened', data: data.opened || [] },
+      { name: 'Closed', data: data.closed || [] }
+    ]);
+    state.charts.weeklyFlow.updateOptions({
+      xaxis: { categories: data.weeks || [] },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
   }
-  
+
   const options = {
     series: [
       {
@@ -2573,7 +2584,7 @@ function createInteractiveWeeklyFlowChart(data) {
       categories: data.weeks || [],
       labels: {
         style: {
-          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+          colors: mutedColor
         }
       }
     },
@@ -2581,12 +2592,12 @@ function createInteractiveWeeklyFlowChart(data) {
       title: {
         text: 'Tickets',
         style: {
-          color: getComputedStyle(document.body).getPropertyValue('--muted')
+          color: mutedColor
         }
       },
       labels: {
         style: {
-          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+          colors: mutedColor
         }
       }
     },
@@ -2604,15 +2615,15 @@ function createInteractiveWeeklyFlowChart(data) {
     legend: {
       position: 'top',
       labels: {
-        colors: getComputedStyle(document.body).getPropertyValue('--text')
+        colors: textColor
       }
     },
     grid: {
-      borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+      borderColor: borderColor,
       strokeDashArray: 4
     }
   };
-  
+
   state.charts.weeklyFlow = new ApexCharts(ctx, options);
   state.charts.weeklyFlow.render();
 }
@@ -2623,14 +2634,23 @@ function createInteractiveLeadTimeChart(data) {
     console.error('ApexCharts is not loaded');
     return;
   }
-  
+
   const ctx = document.getElementById('lead-time-chart');
   if (!ctx) return;
-  
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
   if (state.charts.leadTime) {
-    state.charts.leadTime.destroy();
+    state.charts.leadTime.updateSeries([{ name: 'Resolution Time', data: data.values || [] }]);
+    state.charts.leadTime.updateOptions({
+      xaxis: { categories: data.labels || ['<1d', '1-3d', '3-7d', '7-14d', '>14d'] },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
   }
-  
+
   const options = {
     series: [{
       name: 'Resolution Time',
@@ -2670,14 +2690,14 @@ function createInteractiveLeadTimeChart(data) {
       offsetY: -20,
       style: {
         fontSize: '12px',
-        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
+        colors: [textColor]
       }
     },
     xaxis: {
       categories: data.labels || ['<1d', '1-3d', '3-7d', '7-14d', '>14d'],
       labels: {
         style: {
-          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+          colors: mutedColor
         }
       }
     },
@@ -2685,12 +2705,12 @@ function createInteractiveLeadTimeChart(data) {
       title: {
         text: 'Tickets',
         style: {
-          color: getComputedStyle(document.body).getPropertyValue('--muted')
+          color: mutedColor
         }
       },
       labels: {
         style: {
-          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+          colors: mutedColor
         }
       }
     },
@@ -2703,11 +2723,11 @@ function createInteractiveLeadTimeChart(data) {
       }
     },
     grid: {
-      borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+      borderColor: borderColor,
       strokeDashArray: 4
     }
   };
-  
+
   state.charts.leadTime = new ApexCharts(ctx, options);
   state.charts.leadTime.render();
 }
@@ -2718,18 +2738,32 @@ function createInteractiveCategoryChart(data) {
     console.error('ApexCharts is not loaded');
     return;
   }
-  
+
   const ctx = document.getElementById('category-trend-chart');
   if (!ctx) return;
-  
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+
   if (state.charts.categoryTrend) {
-    state.charts.categoryTrend.destroy();
+    state.charts.categoryTrend.updateSeries([
+      { name: 'This Month', data: (data.categories || []).map(c => c.thisMonth || 0) },
+      { name: 'Last Month', data: (data.categories || []).map(c => c.prevMonth || 0) }
+    ]);
+    state.charts.categoryTrend.updateOptions({
+      xaxis: { categories: (data.categories || []).map(c => c.label) },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
   }
-  
+
   const options = {
-    series: data.values || [],
+    series: [
+      { name: 'This Month', data: (data.categories || []).map(c => c.thisMonth || 0) },
+      { name: 'Last Month', data: (data.categories || []).map(c => c.prevMonth || 0) }
+    ],
     chart: {
-      type: 'donut',
+      type: 'bar',
       height: 300,
       toolbar: {
         show: true,
@@ -2740,62 +2774,53 @@ function createInteractiveCategoryChart(data) {
       animations: {
         enabled: true,
         easing: 'easeinout',
-        speed: 800,
-        animateGradually: {
-          enabled: true,
-          delay: 150
-        }
+        speed: 800
       }
     },
-    colors: ['#4ecdc4', '#74b9ff', '#ffd93d', '#ff6b6b', '#a29bfe', '#fd79a8'],
-    labels: data.labels || [],
-    dataLabels: {
-      enabled: true,
-      formatter: function(val, opt) {
-        return val + ' tickets';
-      },
-      style: {
-        fontSize: '12px',
-        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
-      }
-    },
+    colors: ['#4ecdc4', '#74b9ff'],
     plotOptions: {
-      pie: {
-        donut: {
-          size: '70%',
-          labels: {
-            show: true,
-            total: {
-              show: true,
-              showAlways: true,
-              label: 'Total',
-              fontSize: '16px',
-              fontFamily: 'Helvetica, Arial, sans-serif',
-              fontWeight: 600,
-              color: getComputedStyle(document.body).getPropertyValue('--text')
-            }
-          }
+      bar: {
+        borderRadius: 4,
+        horizontal: false,
+        grouped: true,
+        dataLabels: { position: 'top' }
+      }
+    },
+    dataLabels: {
+      enabled: false
+    },
+    xaxis: {
+      categories: (data.categories || []).map(c => c.label),
+      labels: {
+        style: {
+          colors: mutedColor
+        },
+        rotate: -35
+      }
+    },
+    yaxis: {
+      labels: {
+        style: {
+          colors: mutedColor
         }
       }
     },
     tooltip: {
       theme: state.darkMode ? 'dark' : 'light',
       y: {
-        formatter: function(value, { seriesIndex, dataPointIndex, w }) {
-          const total = series.reduce((a, b) => a + b, 0);
-          const percentage = ((value / total) * 100).toFixed(1);
-          return value + ' tickets (' + percentage + '%)';
+        formatter: function(value) {
+          return value + ' tickets';
         }
       }
     },
     legend: {
-      position: 'bottom',
+      position: 'top',
       labels: {
-        colors: getComputedStyle(document.body).getPropertyValue('--text')
+        colors: textColor
       }
     }
   };
-  
+
   state.charts.categoryTrend = new ApexCharts(ctx, options);
   state.charts.categoryTrend.render();
 }
@@ -2806,14 +2831,21 @@ function createInteractivePriorityChart(data) {
     console.error('ApexCharts is not loaded');
     return;
   }
-  
+
   const ctx = document.getElementById('priority-chart');
   if (!ctx) return;
-  
+
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
   if (state.charts.priority) {
-    state.charts.priority.destroy();
+    state.charts.priority.updateSeries(data.values || [0, 0, 0]);
+    state.charts.priority.updateOptions({
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
   }
-  
+
   const options = {
     series: data.values || [0, 0, 0],
     chart: {
@@ -2840,15 +2872,15 @@ function createInteractivePriorityChart(data) {
       },
       style: {
         fontSize: '11px',
-        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
+        colors: [textColor]
       }
     },
     plotOptions: {
       radar: {
         size: 120,
         polygons: {
-          strokeColors: getComputedStyle(document.body).getPropertyValue('--border'),
-          connectorColors: getComputedStyle(document.body).getPropertyValue('--border'),
+          strokeColors: borderColor,
+          connectorColors: borderColor,
           fill: {
             colors: [state.darkMode ? 'rgba(78, 205, 196, 0.1)' : 'rgba(50, 180, 141, 0.1)']
           }
@@ -2880,11 +2912,11 @@ function createInteractivePriorityChart(data) {
     legend: {
       position: 'bottom',
       labels: {
-        colors: getComputedStyle(document.body).getPropertyValue('--text')
+        colors: textColor
       }
     }
   };
-  
+
   state.charts.priority = new ApexCharts(ctx, options);
   state.charts.priority.render();
 }
@@ -2895,14 +2927,23 @@ function createInteractiveAgingChart(data) {
     console.error('ApexCharts is not loaded');
     return;
   }
-  
+
   const ctx = document.getElementById('aging-buckets-chart');
   if (!ctx) return;
-  
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
   if (state.charts.agingBuckets) {
-    state.charts.agingBuckets.destroy();
+    state.charts.agingBuckets.updateSeries([{ name: 'Open Tickets', data: data.values || [] }]);
+    state.charts.agingBuckets.updateOptions({
+      xaxis: { categories: data.labels || ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'] },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
   }
-  
+
   const options = {
     series: [{
       name: 'Open Tickets',
@@ -2940,14 +2981,14 @@ function createInteractiveAgingChart(data) {
       },
       style: {
         fontSize: '12px',
-        colors: [getComputedStyle(document.body).getPropertyValue('--text')]
+        colors: [textColor]
       }
     },
     xaxis: {
       categories: data.labels || ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'],
       labels: {
         style: {
-          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+          colors: mutedColor
         }
       }
     },
@@ -2955,12 +2996,12 @@ function createInteractiveAgingChart(data) {
       title: {
         text: 'Age Range',
         style: {
-          color: getComputedStyle(document.body).getPropertyValue('--muted')
+          color: mutedColor
         }
       },
       labels: {
         style: {
-          colors: getComputedStyle(document.body).getPropertyValue('--muted')
+          colors: mutedColor
         }
       }
     },
@@ -2973,20 +3014,23 @@ function createInteractiveAgingChart(data) {
       }
     },
     grid: {
-      borderColor: getComputedStyle(document.body).getPropertyValue('--border'),
+      borderColor: borderColor,
       strokeDashArray: 4
     }
   };
-  
+
   state.charts.agingBuckets = new ApexCharts(ctx, options);
   state.charts.agingBuckets.render();
 }
 
 // Update all charts when dark mode changes
 function updateChartsTheme() {
-  // Re-render all charts with new theme
-  if (state.dashboard) {
-    renderDashboard();
-  }
+  const theme = state.darkMode ? 'dark' : 'light';
+  const options = { tooltip: { theme } };
+  Object.values(state.charts).forEach(chart => {
+    if (chart && typeof chart.updateOptions === 'function') {
+      chart.updateOptions(options, false, false);
+    }
+  });
 }
 
