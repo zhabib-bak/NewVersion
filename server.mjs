@@ -1011,156 +1011,330 @@ function countBy(rows, field, filterFn = null) {
   return Array.from(counts.entries()).map(([label, value]) => ({ label, value }));
 }
 
+let _dashboardCache = null;
+let _dashboardCacheTs = 0;
+const DASHBOARD_CACHE_TTL = 60_000; // 1 minute
+
+function invalidateDashboardCache() { _dashboardCache = null; }
+
 async function getDashboardData() {
-  const all = (await query('SELECT * FROM tickets ORDER BY date_opening ASC')).map(mapTicketRow);
-  const open = all.filter((ticket) => ticket.status !== 'Closed');
-  const closed = all.filter((ticket) => ticket.status === 'Closed' && ticket.date_closed);
+  const now = Date.now();
+  if (_dashboardCache && (now - _dashboardCacheTs) < DASHBOARD_CACHE_TTL) {
+    return _dashboardCache;
+  }
 
-  const avgAging = open.length ? Math.round(open.reduce((sum, t) => sum + t.aging, 0) / open.length) : 0;
-  const leadTimes = closed.map((ticket) => {
-    const days = Math.max(0, Math.floor((Date.parse(`${ticket.date_closed}T00:00:00Z`) - Date.parse(`${ticket.date_opening}T00:00:00Z`)) / 86400000));
-    return days;
-  });
-  const avgLeadTime = leadTimes.length ? Math.round((leadTimes.reduce((a, b) => a + b, 0) / leadTimes.length) * 10) / 10 : 0;
-  const reopened = all.filter((t) => t.reopened_count > 0).length;
-  const reopenRate = all.length ? Math.round((reopened / all.length) * 1000) / 10 : 0;
-  const breachedOpen = open.filter((t) => t.is_sla_breached).length;
+  // 1. Totals — single-pass SQL aggregation
+  const [totalsRow] = await query(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN status != 'Closed' THEN 1 ELSE 0 END) AS open_count,
+      SUM(CASE WHEN status = 'Closed' THEN 1 ELSE 0 END) AS closed_count,
+      SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+      SUM(CASE WHEN status = 'Blocked' THEN 1 ELSE 0 END) AS blocked,
+      SUM(CASE WHEN status != 'Closed' AND priority = 'P1 high' THEN 1 ELSE 0 END) AS p1_open,
+      SUM(CASE WHEN status = 'Closed' AND date_closed IS NOT NULL
+        THEN DATEDIFF(date_closed, date_opening) ELSE NULL END) / NULLIF(SUM(CASE WHEN status = 'Closed' AND date_closed IS NOT NULL THEN 1 ELSE 0 END), 0) AS avg_lead_time,
+      SUM(CASE WHEN reopened_count > 0 THEN 1 ELSE 0 END) AS reopened_count,
+      SUM(CASE WHEN date_opening >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS opened_this_week,
+      SUM(CASE WHEN status = 'Closed' AND date_closed >= DATE_SUB(CURDATE(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS closed_this_week,
+      SUM(CASE WHEN status != 'Closed' AND due_date IS NOT NULL AND due_date < CURDATE() THEN 1 ELSE 0 END) AS breached_open,
+      ROUND(AVG(CASE WHEN status != 'Closed' THEN DATEDIFF(CURDATE(), date_opening) ELSE NULL END)) AS avg_aging
+    FROM tickets
+  `);
 
-  return {
+  const totalVal = Number(totalsRow.total) || 0;
+  const closedCount = Number(totalsRow.closed_count) || 0;
+  const reopenedCount = Number(totalsRow.reopened_count) || 0;
+  const avgLeadTime = totalsRow.avg_lead_time != null ? Math.round(Number(totalsRow.avg_lead_time) * 10) / 10 : 0;
+  const reopenRate = totalVal ? Math.round((reopenedCount / totalVal) * 1000) / 10 : 0;
+
+  // 2. weeklyFlow — SQL GROUP BY ISO week for last 8 weeks
+  const [openedWeekRows, closedWeekRows] = await Promise.all([
+    query(`
+      SELECT
+        DATE_FORMAT(MIN(date_opening), '%m-%d') AS label,
+        YEARWEEK(date_opening, 1) AS yw,
+        COUNT(*) AS opened
+      FROM tickets
+      WHERE date_opening >= DATE_SUB(CURDATE(), INTERVAL 56 DAY)
+      GROUP BY yw
+      ORDER BY yw
+    `),
+    query(`
+      SELECT
+        DATE_FORMAT(MIN(date_closed), '%m-%d') AS label,
+        YEARWEEK(date_closed, 1) AS yw,
+        COUNT(*) AS closed
+      FROM tickets
+      WHERE status = 'Closed' AND date_closed >= DATE_SUB(CURDATE(), INTERVAL 56 DAY)
+      GROUP BY yw
+      ORDER BY yw
+    `)
+  ]);
+
+  // Build last 8 ISO weeks anchored to today
+  const weeklyFlow = (() => {
+    const openedMap = new Map();
+    for (const r of openedWeekRows) openedMap.set(String(r.yw), Number(r.opened || 0));
+    const closedMap = new Map();
+    for (const r of closedWeekRows) closedMap.set(String(r.yw), Number(r.closed || 0));
+
+    const result = [];
+    const todayMs = Date.now();
+    for (let i = 7; i >= 0; i--) {
+      const mondayMs = todayMs - (i * 7 + ((new Date(todayMs).getUTCDay() + 6) % 7)) * 86400000;
+      const mondayDate = new Date(mondayMs);
+      const label = mondayDate.toISOString().slice(5, 10);
+      // Compute YEARWEEK(monday, 1) manually using ISO week algorithm
+      const d = new Date(Date.UTC(mondayDate.getUTCFullYear(), mondayDate.getUTCMonth(), mondayDate.getUTCDate()));
+      const dayOfWeek = d.getUTCDay() || 7;
+      d.setUTCDate(d.getUTCDate() + 4 - dayOfWeek);
+      const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+      const isoWeek = Math.ceil(((d - yearStart) / 86400000 + 1) / 7);
+      const yw = String(d.getUTCFullYear() * 100 + isoWeek);
+      const opened = openedMap.get(yw) || 0;
+      const closed = closedMap.get(yw) || 0;
+      result.push({ label, opened, closed, week: yw });
+    }
+    return result;
+  })();
+
+  // 3. sparklines — 7-day rolling window
+  const [openedDayRows, closedDayRows] = await Promise.all([
+    query(`
+      SELECT DATE_FORMAT(date_opening, '%Y-%m-%d') AS day, COUNT(*) AS cnt
+      FROM tickets
+      WHERE date_opening >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+      GROUP BY day ORDER BY day
+    `),
+    query(`
+      SELECT DATE_FORMAT(date_closed, '%Y-%m-%d') AS day, COUNT(*) AS cnt
+      FROM tickets
+      WHERE status = 'Closed' AND date_closed >= DATE_SUB(CURDATE(), INTERVAL 6 DAY)
+      GROUP BY day ORDER BY day
+    `)
+  ]);
+
+  const sparklines = (() => {
+    const openedDayMap = new Map();
+    for (const r of openedDayRows) openedDayMap.set(r.day, Number(r.cnt));
+    const closedDayMap = new Map();
+    for (const r of closedDayRows) closedDayMap.set(r.day, Number(r.cnt));
+    const opened = [];
+    const closed = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const key = d.toISOString().slice(0, 10);
+      opened.push(openedDayMap.get(key) || 0);
+      closed.push(closedDayMap.get(key) || 0);
+    }
+    return { opened, closed };
+  })();
+
+  // 4. workload
+  const workloadRows = await query(`
+    SELECT
+      assignee,
+      SUM(CASE WHEN status = 'Open' THEN 1 ELSE 0 END) AS open_count,
+      SUM(CASE WHEN status = 'In Progress' THEN 1 ELSE 0 END) AS in_progress,
+      SUM(CASE WHEN status = 'Blocked' THEN 1 ELSE 0 END) AS blocked,
+      COUNT(*) AS total
+    FROM tickets
+    WHERE status != 'Closed' AND assignee IS NOT NULL AND assignee != ''
+    GROUP BY assignee
+    ORDER BY total DESC
+    LIMIT 10
+  `);
+  const workload = workloadRows.map(r => ({
+    assignee: r.assignee,
+    open: Number(r.open_count),
+    inProgress: Number(r.in_progress),
+    blocked: Number(r.blocked),
+    total: Number(r.total)
+  }));
+
+  // 5. openByPriority / openByCategory
+  const [priorityRows, categoryRows] = await Promise.all([
+    query(`SELECT priority AS label, COUNT(*) AS value FROM tickets WHERE status != 'Closed' GROUP BY priority`),
+    query(`SELECT category AS label, COUNT(*) AS value FROM tickets WHERE status != 'Closed' AND category IS NOT NULL GROUP BY category ORDER BY value DESC`)
+  ]);
+  const openByPriority = priorityRows.map(r => ({ label: r.label, value: Number(r.value) }));
+  const openByCategory = categoryRows.map(r => ({ label: r.label, value: Number(r.value) }));
+
+  // 6. statusBreakdown
+  const statusRows = await query(`SELECT status AS label, COUNT(*) AS value FROM tickets GROUP BY status`);
+  const statusBreakdown = statusRows.map(r => ({ label: r.label, value: Number(r.value) }));
+
+  // 7. backlogAgingBuckets
+  const [agingRow] = await query(`
+    SELECT
+      SUM(CASE WHEN DATEDIFF(CURDATE(), date_opening) <= 2 THEN 1 ELSE 0 END) AS d0_2,
+      SUM(CASE WHEN DATEDIFF(CURDATE(), date_opening) BETWEEN 3 AND 7 THEN 1 ELSE 0 END) AS d3_7,
+      SUM(CASE WHEN DATEDIFF(CURDATE(), date_opening) BETWEEN 8 AND 14 THEN 1 ELSE 0 END) AS d8_14,
+      SUM(CASE WHEN DATEDIFF(CURDATE(), date_opening) >= 15 THEN 1 ELSE 0 END) AS d15plus
+    FROM tickets
+    WHERE status != 'Closed'
+  `);
+  const backlogAgingBuckets = [
+    { label: '0-2 days',  value: Number(agingRow.d0_2)   || 0 },
+    { label: '3-7 days',  value: Number(agingRow.d3_7)   || 0 },
+    { label: '8-14 days', value: Number(agingRow.d8_14)  || 0 },
+    { label: '15+ days',  value: Number(agingRow.d15plus) || 0 }
+  ];
+
+  // 8. leadTimeDistribution
+  const [ltRow] = await query(`
+    SELECT
+      SUM(CASE WHEN DATEDIFF(date_closed, date_opening) < 1 THEN 1 ELSE 0 END) AS lt1,
+      SUM(CASE WHEN DATEDIFF(date_closed, date_opening) BETWEEN 1 AND 2 THEN 1 ELSE 0 END) AS d1_3,
+      SUM(CASE WHEN DATEDIFF(date_closed, date_opening) BETWEEN 3 AND 6 THEN 1 ELSE 0 END) AS d3_7,
+      SUM(CASE WHEN DATEDIFF(date_closed, date_opening) BETWEEN 7 AND 13 THEN 1 ELSE 0 END) AS d7_14,
+      SUM(CASE WHEN DATEDIFF(date_closed, date_opening) >= 14 THEN 1 ELSE 0 END) AS d14plus
+    FROM tickets
+    WHERE status = 'Closed' AND date_closed IS NOT NULL AND date_opening IS NOT NULL
+  `);
+  const leadTimeDistribution = [
+    { label: '<1d',   value: Number(ltRow.lt1)    || 0 },
+    { label: '1–3d',  value: Number(ltRow.d1_3)   || 0 },
+    { label: '3–7d',  value: Number(ltRow.d3_7)   || 0 },
+    { label: '7–14d', value: Number(ltRow.d7_14)  || 0 },
+    { label: '14+d',  value: Number(ltRow.d14plus) || 0 }
+  ];
+
+  // 9. categoryTrend
+  const categoryTrendRows = await query(`
+    SELECT
+      category AS label,
+      SUM(CASE WHEN date_opening >= DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN 1 ELSE 0 END) AS thisMonth,
+      SUM(CASE WHEN date_opening >= DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m-01')
+               AND date_opening < DATE_FORMAT(CURDATE(), '%Y-%m-01') THEN 1 ELSE 0 END) AS prevMonth
+    FROM tickets
+    WHERE category IS NOT NULL AND category != ''
+    GROUP BY category
+    HAVING thisMonth > 0 OR prevMonth > 0
+    ORDER BY (thisMonth + prevMonth) DESC
+    LIMIT 8
+  `);
+  const categoryTrend = categoryTrendRows.map(r => ({
+    label: r.label,
+    thisMonth: Number(r.thisMonth) || 0,
+    prevMonth: Number(r.prevMonth) || 0
+  }));
+
+  // 10. atRisk
+  const atRiskRows = await query(`
+    SELECT id, jd_ticket_number, description, priority, status,
+      DATEDIFF(CURDATE(), date_opening) AS aging, assignee
+    FROM tickets
+    WHERE status != 'Closed' AND (priority = 'P1 high' OR status = 'Blocked' OR DATEDIFF(CURDATE(), date_opening) >= 10)
+    ORDER BY DATEDIFF(CURDATE(), date_opening) DESC
+    LIMIT 6
+  `);
+  const atRisk = atRiskRows.map(r => ({
+    id: r.id,
+    jd_ticket_number: r.jd_ticket_number || '',
+    description: r.description || '',
+    priority: r.priority || '',
+    status: r.status || '',
+    aging: Number(r.aging) || 0,
+    assignee: r.assignee || ''
+  }));
+
+  // 11. prevWeek
+  const [prevWeekRow] = await query(`
+    SELECT
+      SUM(CASE WHEN date_opening BETWEEN DATE_SUB(CURDATE(), INTERVAL 14 DAY) AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) THEN 1 ELSE 0 END) AS openedPrevWeek,
+      SUM(CASE WHEN status = 'Closed' AND date_closed BETWEEN DATE_SUB(CURDATE(), INTERVAL 14 DAY) AND DATE_SUB(CURDATE(), INTERVAL 8 DAY) THEN 1 ELSE 0 END) AS closedPrevWeek
+    FROM tickets
+  `);
+  const prevWeek = {
+    openedThisWeek: Number(prevWeekRow.openedPrevWeek) || 0,
+    closedThisWeek: Number(prevWeekRow.closedPrevWeek) || 0
+  };
+
+  // 12. closedByAssignee
+  const closedByAssigneeRows = await query(`
+    SELECT assignee AS label, COUNT(*) AS value
+    FROM tickets
+    WHERE status = 'Closed' AND assignee IS NOT NULL AND assignee != ''
+    GROUP BY assignee
+    ORDER BY value DESC
+    LIMIT 10
+  `);
+  const closedByAssignee = closedByAssigneeRows.map(r => ({ label: r.label, value: Number(r.value) }));
+
+  // 13. openByManager
+  const openByManagerRows = await query(`
+    SELECT manager AS label, COUNT(*) AS value
+    FROM tickets
+    WHERE status != 'Closed' AND manager IS NOT NULL AND manager != ''
+    GROUP BY manager
+    ORDER BY value DESC
+  `);
+  const openByManager = openByManagerRows.map(r => ({ label: r.label, value: Number(r.value) }));
+
+  // 14. throughputWeekly — closed tickets grouped by ISO week (last 12 weeks)
+  const throughputRows = await query(`
+    SELECT
+      DATE_FORMAT(date_closed, '%x-W%v') AS label,
+      COUNT(*) AS value
+    FROM tickets
+    WHERE status = 'Closed' AND date_closed >= DATE_SUB(CURDATE(), INTERVAL 84 DAY)
+    GROUP BY label
+    ORDER BY label
+  `);
+  const throughputWeekly = throughputRows.map(r => ({ label: r.label, value: Number(r.value) }));
+
+  // 15. recentActivity — keep existing sync query
+  const recentActivity = (() => {
+    try {
+      return db.prepare(`
+        SELECT tc.id, tc.created_at, tc.author, tc.comment_type, tc.body,
+               t.jd_ticket_number, t.description, t.status, t.priority, t.id AS ticket_id
+        FROM ticket_comments tc
+        JOIN tickets t ON t.id = tc.ticket_id
+        ORDER BY tc.created_at DESC
+        LIMIT 8
+      `).all();
+    } catch { return []; }
+  })();
+
+  const result = {
     totals: {
-      total: all.length,
-      open: open.length,
-      closed: closed.length,
-      avgAging,
+      total: totalVal,
+      open: Number(totalsRow.open_count) || 0,
+      closed: closedCount,
+      avgAging: Number(totalsRow.avg_aging) || 0,
       avgLeadTime,
       reopenRate,
-      breachedOpen,
-      inProgress: open.filter(t => t.status === 'In Progress').length,
-      blocked: open.filter(t => t.status === 'Blocked').length,
-      p1Open: open.filter(t => t.priority === 'P1 high').length,
-      openedThisWeek: all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= Date.now() - 7 * 86400000).length,
-      closedThisWeek: closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= Date.now() - 7 * 86400000).length,
-      resolutionRate: all.length ? Math.round(closed.length / all.length * 100) : 0,
+      breachedOpen: Number(totalsRow.breached_open) || 0,
+      inProgress: Number(totalsRow.in_progress) || 0,
+      blocked: Number(totalsRow.blocked) || 0,
+      p1Open: Number(totalsRow.p1_open) || 0,
+      openedThisWeek: Number(totalsRow.opened_this_week) || 0,
+      closedThisWeek: Number(totalsRow.closed_this_week) || 0,
+      resolutionRate: totalVal ? Math.round(closedCount / totalVal * 100) : 0,
     },
-    openedByDay: aggregateByPeriod(all, 'date_opening', 'day'),
-    openedByWeek: aggregateByPeriod(all, 'date_opening', 'week'),
-    openedByMonth: aggregateByPeriod(all, 'date_opening', 'month'),
-    closedByDay: aggregateByPeriod(closed, 'date_closed', 'day'),
-    closedByWeek: aggregateByPeriod(closed, 'date_closed', 'week'),
-    closedByMonth: aggregateByPeriod(closed, 'date_closed', 'month'),
-    throughputWeekly: aggregateByPeriod(closed, 'date_closed', 'week').slice(-12),
-    openByPriority: countBy(open, 'priority'),
-    openByAssignee: countBy(open, 'assignee'),
-    openByCategory: countBy(open, 'category'),
-    openByManager: countBy(open, 'manager'),
-    backlogAgingBuckets: [
-      { label: '0-2 days', value: open.filter((t) => t.aging <= 2).length },
-      { label: '3-7 days', value: open.filter((t) => t.aging >= 3 && t.aging <= 7).length },
-      { label: '8-14 days', value: open.filter((t) => t.aging >= 8 && t.aging <= 14).length },
-      { label: '15+ days', value: open.filter((t) => t.aging >= 15).length }
-    ],
-    statusBreakdown: [
-      { label: 'Open', value: all.filter(t => t.status === 'Open').length },
-      { label: 'In Progress', value: all.filter(t => t.status === 'In Progress').length },
-      { label: 'Blocked', value: all.filter(t => t.status === 'Blocked').length },
-      { label: 'Closed', value: closed.length }
-    ],
-    weeklyFlow: (() => {
-      const weeks = 8;
-      const result = [];
-      for (let i = weeks - 1; i >= 0; i--) {
-        const weekStart = Date.now() - (i + 1) * 7 * 86400000;
-        const weekEnd = Date.now() - i * 7 * 86400000;
-        const label = new Date(weekStart).toISOString().slice(5, 10);
-        result.push({
-          label,
-          opened: all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= weekStart && Date.parse(`${t.date_opening}T00:00:00Z`) < weekEnd).length,
-          closed: closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= weekStart && Date.parse(`${t.date_closed}T00:00:00Z`) < weekEnd).length
-        });
-      }
-      return result;
-    })(),
-    prevWeek: (() => {
-      const now = Date.now();
-      const thisStart = now - 7 * 86400000;
-      const prevStart = now - 14 * 86400000;
-      return {
-        openedThisWeek: all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= prevStart && Date.parse(`${t.date_opening}T00:00:00Z`) < thisStart).length,
-        closedThisWeek: closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= prevStart && Date.parse(`${t.date_closed}T00:00:00Z`) < thisStart).length,
-      };
-    })(),
-    atRisk: open
-      .filter(t => t.priority === 'P1 high' || t.status === 'Blocked' || t.aging >= 10)
-      .sort((a, b) => b.aging - a.aging)
-      .slice(0, 6)
-      .map(t => ({
-        id: t.id,
-        jd_ticket_number: t.jd_ticket_number || '',
-        description: t.description || '',
-        priority: t.priority || '',
-        status: t.status || '',
-        aging: t.aging || 0,
-        assignee: t.assignee || ''
-      })),
-    sparklines: (() => {
-      const now = Date.now();
-      const opened = Array.from({ length: 7 }, (_, i) => {
-        const dayStart = now - (6 - i) * 86400000;
-        const dayEnd = dayStart + 86400000;
-        return all.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= dayStart && Date.parse(`${t.date_opening}T00:00:00Z`) < dayEnd).length;
-      });
-      const closedArr = Array.from({ length: 7 }, (_, i) => {
-        const dayStart = now - (6 - i) * 86400000;
-        const dayEnd = dayStart + 86400000;
-        return closed.filter(t => t.date_closed && Date.parse(`${t.date_closed}T00:00:00Z`) >= dayStart && Date.parse(`${t.date_closed}T00:00:00Z`) < dayEnd).length;
-      });
-      return { opened, closed: closedArr };
-    })(),
-    workload: (() => {
-      return [...new Set(open.map(t => t.assignee))]
-        .map(a => ({
-          assignee:   a,
-          open:       open.filter(t => t.assignee === a && t.status === 'Open').length,
-          inProgress: open.filter(t => t.assignee === a && t.status === 'In Progress').length,
-          blocked:    open.filter(t => t.assignee === a && t.status === 'Blocked').length,
-          total:      open.filter(t => t.assignee === a).length,
-        }))
-        .sort((a, b) => b.total - a.total)
-        .slice(0, 10);
-    })(),
-    recentActivity: (() => {
-      try {
-        return db.prepare(`
-          SELECT tc.id, tc.created_at, tc.author, tc.comment_type, tc.body,
-                 t.jd_ticket_number, t.description, t.status, t.priority, t.id AS ticket_id
-          FROM ticket_comments tc
-          JOIN tickets t ON t.id = tc.ticket_id
-          ORDER BY tc.created_at DESC
-          LIMIT 8
-        `).all();
-      } catch { return []; }
-    })(),
-    leadTimeDistribution: [
-      { label: '<1d',   value: leadTimes.filter(d => d < 1).length },
-      { label: '1–3d',  value: leadTimes.filter(d => d >= 1 && d < 3).length },
-      { label: '3–7d',  value: leadTimes.filter(d => d >= 3 && d < 7).length },
-      { label: '7–14d', value: leadTimes.filter(d => d >= 7 && d < 14).length },
-      { label: '14+d',  value: leadTimes.filter(d => d >= 14).length },
-    ],
-    closedByAssignee: countBy(closed, 'assignee').slice(0, 10),
-    categoryTrend: (() => {
-      const now = new Date();
-      const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
-      const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1).getTime();
-      const cats = [...new Set(all.map(t => t.category).filter(Boolean))];
-      return cats.map(cat => {
-        const catAll = all.filter(t => t.category === cat);
-        const thisMonth = catAll.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= thisMonthStart).length;
-        const prevMonth = catAll.filter(t => t.date_opening && Date.parse(`${t.date_opening}T00:00:00Z`) >= prevMonthStart && Date.parse(`${t.date_opening}T00:00:00Z`) < thisMonthStart).length;
-        return { label: cat, thisMonth, prevMonth };
-      }).filter(r => r.thisMonth > 0 || r.prevMonth > 0).sort((a, b) => (b.thisMonth + b.prevMonth) - (a.thisMonth + a.prevMonth)).slice(0, 8);
-    })(),
+    weeklyFlow,
+    sparklines,
+    workload,
+    openByPriority,
+    openByCategory,
+    openByManager,
+    statusBreakdown,
+    backlogAgingBuckets,
+    leadTimeDistribution,
+    categoryTrend,
+    atRisk,
+    prevWeek,
+    recentActivity,
+    closedByAssignee,
+    throughputWeekly,
   };
+
+  _dashboardCache = result;
+  _dashboardCacheTs = Date.now();
+  return result;
 }
 
 const DATE_HEADERS = new Set(['date_opening', 'date_closed', 'due_date']);
@@ -1809,6 +1983,7 @@ const server = createServer(async (request, response) => {
         const row = await stmtTickets.byId(id);
         if (row) emitWebhooks('ticket.created', await hydrateTicket(row)).catch(() => {});
       }
+      if (createdIds.length) invalidateDashboardCache();
       sendJson(response, 201, { batch_id: batchId, created: createdIds.length, skipped: errors.length, errors, total: rows.length });
       return;
     }
@@ -1888,6 +2063,7 @@ const server = createServer(async (request, response) => {
           sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
         }
         
+        invalidateDashboardCache();
         sendJson(response, 201, { ticket });
         return;
       } catch (error) {
@@ -1945,6 +2121,7 @@ const server = createServer(async (request, response) => {
         const managerEmail = await getUserEmail(ticket.manager);
         if (managerEmail) sendEmail(managerEmail, `[Status changed #${ticket.id}] ${current.status} → ${ticket.status}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
       }
+      invalidateDashboardCache();
       sendJson(response, 200, { ticket });
       return;
     }
@@ -1958,6 +2135,7 @@ const server = createServer(async (request, response) => {
       await stmtTickets.delete(id);
       await logAudit('ticket', id, 'delete', auth.name, { jd_ticket_number: exists.jd_ticket_number });
       await emitWebhooks('ticket.deleted', { id, jd_ticket_number: exists.jd_ticket_number });
+      invalidateDashboardCache();
       sendJson(response, 200, { success: true });
       return;
     }
@@ -1989,6 +2167,7 @@ const server = createServer(async (request, response) => {
       await stmtImport.deleteBatchTickets(id);
       await stmtImport.deleteBatch(id);
       await logAudit('import_batch', id, 'rollback', auth.name, { batch_name: batch.batch_name, tickets_deleted: count });
+      invalidateDashboardCache();
       sendJson(response, 200, { success: true, tickets_deleted: count });
       return;
     }
