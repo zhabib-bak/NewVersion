@@ -871,10 +871,11 @@ function renderDashboard() {
   if (kpiRow) {
     const kpis = [
       { label: 'Total',       value: t.total,             sub: 'All time',                                                  color: 'neutral', icon: '≡' },
-      { label: 'Open',        value: t.open,              sub: t.open > 10 ? 'High volume' : 'Under control',               color: t.open > 10 ? 'warning' : 'success', icon: '○', filter: 'status=Open' },
+      { label: 'Open',        value: t.open,              sub: `↑${t.openedThisWeek} this week`,                           color: t.open > 10 ? 'warning' : 'success', icon: '○', filter: 'status=Open' },
       { label: 'In Progress', value: t.inProgress,        sub: t.inProgress > 0 ? `${t.inProgress} active` : 'None active', color: 'brand', icon: '◑', filter: 'status=In Progress' },
       { label: 'Blocked',     value: t.blocked,           sub: t.blocked > 0 ? 'Needs attention' : 'All clear',             color: t.blocked > 0 ? 'danger' : 'success', icon: '⊘', filter: 'status=Blocked' },
       { label: 'P1 Open',     value: t.p1Open,            sub: t.p1Open > 0 ? 'Critical' : 'None critical',                 color: t.p1Open > 0 ? 'danger' : 'success', icon: '▲', filter: 'priority=P1 high' },
+      { label: 'SLA Breached', value: t.breachedOpen,     sub: t.breachedOpen > 0 ? 'Needs attention' : 'All within SLA',   color: t.breachedOpen > 0 ? 'danger' : 'success', icon: '⚠', filter: 'status=Blocked' },
       { label: 'Avg Lead Time',value: `${t.avgLeadTime}d`, sub: t.avgLeadTime <= 3 ? 'Fast resolution' : t.avgLeadTime <= 7 ? 'Moderate' : 'Review process', color: t.avgLeadTime <= 3 ? 'success' : t.avgLeadTime <= 7 ? 'warning' : 'danger', icon: '⏱' },
       { label: 'Reopen Rate', value: `${t.reopenRate}%`,  sub: t.reopenRate <= 5 ? 'Quality is good' : t.reopenRate <= 15 ? 'Worth monitoring' : 'Quality issue', color: t.reopenRate <= 5 ? 'success' : t.reopenRate <= 15 ? 'warning' : 'danger', icon: '↺' },
     ];
@@ -902,10 +903,12 @@ function renderDashboard() {
   const atRiskCount = document.getElementById('at-risk-count');
   if (atRiskPanel) atRiskPanel.hidden = !(d.atRisk && d.atRisk.length);
   if (atRiskCount && d.atRisk) atRiskCount.textContent = `${d.atRisk.length} ticket${d.atRisk.length !== 1 ? 's' : ''}`;
+  const resRateEl = document.getElementById('resolution-rate-badge');
+  if (resRateEl && d.totals) resRateEl.textContent = `${d.totals.resolutionRate}% resolved`;
 
   // Interactive Flow chart + delta badge
   createInteractiveWeeklyFlowChart({
-    weeks: d.weeklyFlow?.map(w => w.week) || [],
+    weeks: d.weeklyFlow?.map(w => w.label) || [],
     opened: d.weeklyFlow?.map(w => w.opened) || [],
     closed: d.weeklyFlow?.map(w => w.closed) || []
   });
@@ -919,32 +922,27 @@ function renderDashboard() {
 
   // Interactive Comparison charts
   createInteractiveLeadTimeChart({
-    labels: ['<1d', '1-3d', '3-7d', '7-14d', '>14d'],
-    values: d.leadTimeDistribution || [0, 0, 0, 0, 0]
+    labels: (d.leadTimeDistribution || []).map(d => d.label),
+    values: (d.leadTimeDistribution || []).map(d => d.value)
   });
   
   createInteractiveCategoryChart({
-    labels: d.categoryTrend?.map(c => c.category) || [],
-    values: d.categoryTrend?.map(c => c.count) || []
+    categories: d.categoryTrend || [],
   });
   
+  const priorityMap = {};
+  (d.openByPriority || []).forEach(p => { priorityMap[p.label] = p.value; });
   createInteractivePriorityChart({
     values: [
-      d.priorityDistribution?.p1 || 0,
-      d.priorityDistribution?.p2 || 0,
-      d.priorityDistribution?.p3 || 0
+      priorityMap['P1 high'] || 0,
+      priorityMap['P2 medium'] || 0,
+      priorityMap['P3 low'] || 0
     ]
   });
   
   createInteractiveAgingChart({
-    labels: ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'],
-    values: [
-      d.agingBuckets?.['0-2'] || 0,
-      d.agingBuckets?.['3-7'] || 0,
-      d.agingBuckets?.['8-14'] || 0,
-      d.agingBuckets?.['15-30'] || 0,
-      d.agingBuckets?.['>30'] || 0
-    ]
+    labels: (d.backlogAgingBuckets || []).map(b => b.label.replace(' days', 'd')),
+    values: (d.backlogAgingBuckets || []).map(b => b.value)
   });
 
   // Workload table
@@ -1190,7 +1188,7 @@ function renderActivityFeed(container, data) {
         <p class="af-ticket">#${escapeHtml(String(item.jd_ticket_number || item.ticket_id))}
           <span class="af-desc">${escapeHtml((item.description || '').slice(0, 60))}${(item.description || '').length > 60 ? '…' : ''}</span>
         </p>
-        <p class="af-comment">${escapeHtml((item.comment || '').slice(0, 90))}${(item.comment || '').length > 90 ? '…' : ''}</p>
+        <p class="af-comment">${escapeHtml((item.body || '').slice(0, 90))}${(item.body || '').length > 90 ? '…' : ''}</p>
         <p class="af-meta">
           <span class="status-pill status-pill--${statusSlug(item.status)}">${escapeHtml(item.status || '')}</span>
           <span class="muted">${formatIsoDate(item.created_at)}</span>
