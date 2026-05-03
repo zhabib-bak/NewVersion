@@ -111,7 +111,8 @@ try {
 await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
-// Database configuration (supports both MySQL and PostgreSQL)
+// Database configuration (supports Manus DATABASE_URL first, with legacy MySQL variables as fallback)
+const DATABASE_URL = process.env.DATABASE_URL || '';
 const DB_HOST = process.env.DB_HOST || 'sql.freedb.tech';
 const DB_PORT = Number(process.env.DB_PORT || 3306);
 const DB_NAME = process.env.DB_NAME || 'freedb_TicketTracker';
@@ -123,15 +124,26 @@ const DB_TYPE = process.env.DB_TYPE || 'mysql'; // 'mysql' or 'postgres'
 let pool;
 
 async function createPool() {
-  pool = mysqlCreateConnection({
-    host: DB_HOST,
-    port: DB_PORT,
-    user: DB_USER,
-    password: DB_PASS,
-    database: DB_NAME,
-    namedPlaceholders: true,
-    multipleStatements: true
-  });
+  if (DATABASE_URL) {
+    if (!/^mysql(s)?:\/\//i.test(DATABASE_URL)) {
+      throw new Error('DATABASE_URL must use a MySQL-compatible URL, for example mysql://user:pass@host:3306/database.');
+    }
+    pool = mysqlCreateConnection({
+      uri: DATABASE_URL,
+      namedPlaceholders: true,
+      multipleStatements: true
+    });
+  } else {
+    pool = mysqlCreateConnection({
+      host: DB_HOST,
+      port: DB_PORT,
+      user: DB_USER,
+      password: DB_PASS,
+      database: DB_NAME,
+      namedPlaceholders: true,
+      multipleStatements: true
+    });
+  }
   await pool;
 }
 

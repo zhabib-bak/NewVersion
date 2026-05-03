@@ -9,6 +9,8 @@
   },
   "scripts": {
     "start": "node server.mjs",
+    "dev": "node seed-demo-data.mjs && node server.mjs",
+    "seed": "node seed-demo-data.mjs",
     "test": "node scripts/smoke-test.mjs",
     "smoke": "node scripts/smoke-test.mjs"
   },
