@@ -74,6 +74,37 @@
           <p class="muted">User: <strong id="session-user">-</strong></p>
           <p class="muted">Role: <strong id="session-role">-</strong></p>
         </section>
+
+        <!-- Enhanced Features Panel -->
+        <section class="panel">
+          <div class="header-row">
+            <h2>Notifications</h2>
+            <div class="notification-badge" id="notifications-badge" style="display: none;">0</div>
+          </div>
+          <button type="button" class="ghost" onclick="toggleNotifications()">View All</button>
+        </section>
+
+        <section class="panel">
+          <div class="header-row">
+            <h2>Quick Actions</h2>
+          </div>
+          <div class="quick-actions">
+            <button type="button" class="ghost" onclick="switchTab('entry'); document.getElementById('description').focus()">New Ticket</button>
+            <button type="button" class="ghost" onclick="toggleAdvancedSearch()">Advanced Search</button>
+            <button type="button" class="ghost" onclick="showKeyboardShortcuts()">Shortcuts</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="header-row">
+            <h2>Tools</h2>
+          </div>
+          <div class="tools-menu">
+            <button type="button" class="ghost" onclick="showTicketTemplates()">Templates</button>
+            <button type="button" class="ghost" onclick="showBulkActions()">Bulk Actions</button>
+            <button type="button" class="ghost" onclick="showRecentActivity()">Activity</button>
+          </div>
+        </section>
       </aside>
 
       <main class="content">
@@ -178,7 +209,6 @@
               </div>
               <div class="actions-inline">
                 <button id="advanced-search-toggle" type="button" class="ghost">🔍 Advanced Search</button>
-                <button id="dark-mode-toggle" type="button" class="ghost">☀️</button>
                 <button id="import-csv" type="button" class="ghost">Import CSV</button>
                 <button id="export-csv" type="button" class="ghost">Export CSV</button>
                 <span id="ticket-count" class="pill"></span>
@@ -334,84 +364,208 @@
         </section>
 
         <section id="tab-dashboards" class="tab-panel">
-          <div class="dash-header">
-            <div>
-              <p class="eyebrow">Operations Intelligence</p>
-              <h2 class="dashboard-title">Live Dashboard</h2>
+          <!-- Professional Dashboard Header -->
+          <div class="pro-dash-header">
+            <div class="pro-dash-title">
+              <p class="eyebrow">Business Intelligence</p>
+              <h2>Executive Dashboard</h2>
             </div>
-            <div class="dash-header-right">
-              <span class="autorefresh-indicator" id="autorefresh-dot" hidden></span>
-              <span class="muted" id="dashboard-updated" style="font-size:.78rem">Loading…</span>
-              <label class="autorefresh-label" for="autorefresh-select">Auto</label>
-              <select id="autorefresh-select" class="autorefresh-select">
-                <option value="0">Off</option>
-                <option value="60">1 min</option>
-                <option value="300" selected>5 min</option>
-                <option value="600">10 min</option>
-              </select>
-              <button type="button" id="refresh-dashboard" class="ghost small-button">↺ Refresh</button>
-            </div>
-          </div>
-
-          <!-- Row 1: KPI cards -->
-          <div class="kpi-row" id="kpi-row"></div>
-
-          <!-- At Risk panel -->
-          <article class="panel at-risk-panel" id="at-risk-panel" hidden>
-            <div class="chart-head">
-              <div><p class="eyebrow" style="color:var(--danger)">Attention Required</p><h3>At-risk tickets — P1, Blocked or aged 10+ days</h3></div>
-              <span id="at-risk-count" class="at-risk-badge"></span>
-            </div>
-            <div id="at-risk-table"></div>
-          </article>
-
-          <!-- Row 2: Full-width flow chart -->
-          <div class="dash-row-full">
-            <article class="panel dash-chart-main">
-              <div class="chart-head">
-                <div><p class="eyebrow">Ticket Flow</p><h3>Opened vs Closed — last 8 weeks</h3></div>
-                <span id="flow-net-delta" class="net-delta-badge neutral"></span>
+            <div class="pro-dash-controls">
+              <div class="pro-dash-actions">
+                <button type="button" class="pro-btn primary" onclick="exportDashboard('excel')">
+                  📊 Export to Excel
+                </button>
+                <button type="button" class="pro-btn secondary" onclick="refreshProfessionalDashboard()">
+                  🔄 Refresh
+                </button>
+                <button type="button" class="pro-btn secondary" onclick="toggleDashboardLayout()">
+                  ⚙️ Layout
+                </button>
               </div>
-              <div id="weekly-flow-chart" class="svg-chart-wrap"></div>
-            </article>
-          </div>
-
-          <!-- Row 3: Three comparison charts -->
-          <div class="dash-row-three">
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Resolution Speed</p><h3>Lead time distribution</h3></div></div>
-              <div id="lead-time-chart"></div>
-            </article>
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Open by Category</p><h3>Active tickets per category</h3></div></div>
-              <div id="category-trend-chart"></div>
-            </article>
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Resolution Health</p><h3>Quality &amp; speed metrics</h3></div></div>
-              <div id="closed-assignee-chart"></div>
-            </article>
-          </div>
-
-          <!-- Row 4: Workload + Activity -->
-          <div class="dash-row-wide">
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Team Workload</p><h3>Open tickets per assignee</h3></div></div>
-              <div id="workload-table" class="workload-table"></div>
-            </article>
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Recent Activity</p><h3>Latest updates</h3></div></div>
-              <div id="activity-feed" class="activity-feed"></div>
-            </article>
-          </div>
-
-          <!-- Row 5: Backlog health (keep) -->
-          <article class="panel">
-            <div class="chart-head"><div><p class="eyebrow">Backlog Health</p><h3>Priority &amp; aging</h3></div></div>
-            <div class="dash-row-health">
-              <div id="priority-chart"></div>
-              <div id="aging-buckets-chart"></div>
+              <div class="pro-dash-meta">
+                <span class="pro-last-updated" id="pro-dashboard-updated">Loading...</span>
+                <select id="pro-time-range" class="pro-time-select">
+                  <option value="7">Last 7 days</option>
+                  <option value="30" selected>Last 30 days</option>
+                  <option value="90">Last 90 days</option>
+                  <option value="365">Last year</option>
+                </select>
+              </div>
             </div>
-          </article>
+          </div>
+
+          <!-- Executive Summary Row -->
+          <div class="pro-executive-summary">
+            <div class="pro-summary-header">
+              <h3>Executive Summary</h3>
+              <div class="pro-summary-period">
+                Period: <span id="pro-period-display">Last 30 days</span>
+              </div>
+            </div>
+            <div class="pro-kpi-grid" id="pro-kpi-grid">
+              <!-- Professional KPI cards will be rendered here -->
+            </div>
+          </div>
+
+          <!-- Main Dashboard Grid -->
+          <div class="pro-dashboard-grid">
+            <!-- Pivot Table Section -->
+            <div class="pro-dashboard-card pro-pivot-section" data-widget="pivot">
+              <div class="pro-card-header">
+                <div class="pro-card-title">
+                  <h3>📋 Pivot Analysis</h3>
+                  <span class="pro-card-subtitle">Drag fields to analyze</span>
+                </div>
+                <div class="pro-card-actions">
+                  <button type="button" class="pro-btn-icon" onclick="resetPivotTable()">↺</button>
+                  <button type="button" class="pro-btn-icon" onclick="exportPivotTable()">📥</button>
+                </div>
+              </div>
+              <div class="pro-pivot-controls">
+                <div class="pro-pivot-field-area">
+                  <div class="pro-pivot-drop-zone" data-area="rows">
+                    <div class="pro-drop-label">Rows</div>
+                    <div class="pro-drop-fields" id="pivot-rows"></div>
+                  </div>
+                  <div class="pro-pivot-drop-zone" data-area="columns">
+                    <div class="pro-drop-label">Columns</div>
+                    <div class="pro-drop-fields" id="pivot-columns"></div>
+                  </div>
+                  <div class="pro-pivot-drop-zone" data-area="values">
+                    <div class="pro-drop-label">Values</div>
+                    <div class="pro-drop-fields" id="pivot-values"></div>
+                  </div>
+                  <div class="pro-pivot-drop-zone" data-area="filters">
+                    <div class="pro-drop-label">Filters</div>
+                    <div class="pro-drop-fields" id="pivot-filters"></div>
+                  </div>
+                </div>
+                <div class="pro-pivot-field-list">
+                  <div class="pro-field-category">
+                    <h4>Dimensions</h4>
+                    <div class="pro-field-items" id="dimension-fields"></div>
+                  </div>
+                  <div class="pro-field-category">
+                    <h4>Measures</h4>
+                    <div class="pro-field-items" id="measure-fields"></div>
+                  </div>
+                </div>
+              </div>
+              <div class="pro-pivot-table-container">
+                <div id="pro-pivot-table" class="pro-excel-table"></div>
+              </div>
+            </div>
+
+            <!-- Waterfall Chart -->
+            <div class="pro-dashboard-card pro-waterfall-section" data-widget="waterfall">
+              <div class="pro-card-header">
+                <div class="pro-card-title">
+                  <h3>💰 Ticket Flow Waterfall</h3>
+                  <span class="pro-card-subtitle">Opening + Created - Closed = Ending</span>
+                </div>
+                <div class="pro-card-actions">
+                  <button type="button" class="pro-btn-icon" onclick="toggleChartType('waterfall')">📊</button>
+                  <button type="button" class="pro-btn-icon" onclick="exportChart('waterfall')">📥</button>
+                </div>
+              </div>
+              <div id="pro-waterfall-chart" class="pro-chart-container"></div>
+            </div>
+
+            <!-- Pareto Analysis -->
+            <div class="pro-dashboard-card pro-pareto-section" data-widget="pareto">
+              <div class="pro-card-header">
+                <div class="pro-card-title">
+                  <h3📈 Pareto Analysis</h3>
+                  <span class="pro-card-subtitle">80/20 Rule - Top Issues</span>
+                </div>
+                <div class="pro-card-actions">
+                  <button type="button" class="pro-btn-icon" onclick="toggleParetoView()">👁️</button>
+                  <button type="button" class="pro-btn-icon" onclick="exportChart('pareto')">📥</button>
+                </div>
+              </div>
+              <div id="pro-pareto-chart" class="pro-chart-container"></div>
+            </div>
+
+            <!-- SLA Gauge Chart -->
+            <div class="pro-dashboard-card pro-sla-section" data-widget="sla">
+              <div class="pro-card-header">
+                <div class="pro-card-title">
+                  <h3>⏱️ SLA Performance</h3>
+                  <span class="pro-card-subtitle">Service Level Agreement Metrics</span>
+                </div>
+                <div class="pro-card-actions">
+                  <button type="button" class="pro-btn-icon" onclick="toggleSlaView()">👁️</button>
+                  <button type="button" class="pro-btn-icon" onclick="exportChart('sla')">📥</button>
+                </div>
+              </div>
+              <div id="pro-sla-chart" class="pro-chart-container"></div>
+            </div>
+
+            <!-- Team Heatmap -->
+            <div class="pro-dashboard-card pro-heatmap-section" data-widget="heatmap">
+              <div class="pro-card-header">
+                <div class="pro-card-title">
+                  <h3>🔥 Team Workload Heatmap</h3>
+                  <span class="pro-card-subtitle">Assignee vs Category Matrix</span>
+                </div>
+                <div class="pro-card-actions">
+                  <button type="button" class="pro-btn-icon" onclick="toggleHeatmapView()">👁️</button>
+                  <button type="button" class="pro-btn-icon" onclick="exportChart('heatmap')">📥</button>
+                </div>
+              </div>
+              <div id="pro-heatmap-chart" class="pro-chart-container"></div>
+            </div>
+
+            <!-- Trend Analysis -->
+            <div class="pro-dashboard-card pro-trend-section" data-widget="trend">
+              <div class="pro-card-header">
+                <div class="pro-card-title">
+                  <h3>📈 Multi-Metric Trends</h3>
+                  <span class="pro-card-subtitle">Combined Performance Indicators</span>
+                </div>
+                <div class="pro-card-actions">
+                  <button type="button" class="pro-btn-icon" onclick="toggleTrendMetrics()">⚙️</button>
+                  <button type="button" class="pro-btn-icon" onclick="exportChart('trend')">📥</button>
+                </div>
+              </div>
+              <div id="pro-trend-chart" class="pro-chart-container"></div>
+            </div>
+
+            <!-- Risk Matrix -->
+            <div class="pro-dashboard-card pro-risk-section" data-widget="risk">
+              <div class="pro-card-header">
+                <div class="pro-card-title">
+                  <h3>⚠️ Risk Matrix</h3>
+                  <span class="pro-card-subtitle">Impact vs Urgency Analysis</span>
+                </div>
+                <div class="pro-card-actions">
+                  <button type="button" class="pro-btn-icon" onclick="toggleRiskView()">👁️</button>
+                  <button type="button" class="pro-btn-icon" onclick="exportChart('risk')">📥</button>
+                </div>
+              </div>
+              <div id="pro-risk-chart" class="pro-chart-container"></div>
+            </div>
+          </div>
+
+          <!-- Professional Status Bar -->
+          <div class="pro-status-bar">
+            <div class="pro-status-left">
+              <span class="pro-status-item">
+                🔄 Auto-refresh: <span id="pro-auto-status">5 min</span>
+              </span>
+              <span class="pro-status-item">
+                📊 Data points: <span id="pro-data-points">0</span>
+              </span>
+            </div>
+            <div class="pro-status-right">
+              <span class="pro-status-item">
+                ⚡ Performance: <span id="pro-performance">Excellent</span>
+              </span>
+              <span class="pro-status-item">
+                🔒 Last sync: <span id="pro-last-sync">Never</span>
+              </span>
+            </div>
+          </div>
         </section>
 
         <section id="tab-roles" class="tab-panel">
@@ -627,6 +781,225 @@
           <div id="import-results-content" class="import-results"></div>
           <div class="actions" style="margin-top:1.5rem">
             <button type="button" id="import-done">Done</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Enhanced Features Modals and Panels -->
+
+    <!-- Notifications Panel -->
+    <div id="notifications-panel" class="modal-overlay" hidden>
+      <div class="modal-card panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Notifications Center</p>
+            <h3>Recent Notifications</h3>
+          </div>
+          <button type="button" class="ghost" onclick="toggleNotifications()">Close</button>
+        </div>
+        <div id="notifications-list" class="notifications-list"></div>
+      </div>
+    </div>
+
+    <!-- Advanced Search Panel -->
+    <div id="advanced-search-panel" class="advanced-search-panel" hidden>
+      <div class="panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Advanced Search</p>
+            <h3>Find tickets with precision</h3>
+          </div>
+          <button type="button" class="ghost" onclick="toggleAdvancedSearch()">Close</button>
+        </div>
+        <div class="advanced-search-filters">
+          <div class="filter-row">
+            <label>Status
+              <select id="filter-status" multiple data-filter="status">
+                <option value="">All Statuses</option>
+              </select>
+            </label>
+            <label>Priority
+              <select id="filter-priority" multiple data-filter="priority">
+                <option value="">All Priorities</option>
+              </select>
+            </label>
+          </div>
+          <div class="filter-row">
+            <label>Assignee
+              <select id="filter-assignee" multiple data-filter="assignee">
+                <option value="">All Assignees</option>
+              </select>
+            </label>
+            <label>Manager
+              <select id="filter-manager" multiple data-filter="manager">
+                <option value="">All Managers</option>
+              </select>
+            </label>
+          </div>
+          <div class="filter-row">
+            <label>Category
+              <select id="filter-category" multiple data-filter="category">
+                <option value="">All Categories</option>
+              </select>
+            </label>
+            <label>Date Range
+              <div class="date-range">
+                <input type="date" id="filter-date-start" data-filter="dateStart" />
+                <span>to</span>
+                <input type="date" id="filter-date-end" data-filter="dateEnd" />
+              </div>
+            </label>
+          </div>
+          <div class="filter-row">
+            <label>Tags
+              <input type="text" id="filter-tags" data-filter="tags" placeholder="Enter tags separated by commas" />
+            </label>
+          </div>
+          <div class="actions">
+            <button type="button" onclick="clearAdvancedFilters()" class="ghost">Clear All</button>
+            <button type="button" onclick="saveCurrentSearch()">Save Search</button>
+          </div>
+        </div>
+        <div class="saved-searches-section">
+          <p class="eyebrow">Saved Searches</p>
+          <div id="saved-searches-list" class="saved-searches-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ticket Templates Panel -->
+    <div id="ticket-templates-panel" class="modal-overlay" hidden>
+      <div class="modal-card panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Ticket Templates</p>
+            <h3>Quick ticket creation templates</h3>
+          </div>
+          <button type="button" class="ghost" onclick="showTicketTemplates()">Close</button>
+        </div>
+        <div class="templates-content">
+          <div class="template-form-section">
+            <form id="template-form" class="stack">
+              <label>Template Name
+                <input type="text" id="template-name" required />
+              </label>
+              <label>Description Template
+                <textarea id="template-description" rows="3" required></textarea>
+              </label>
+              <div class="form-row">
+                <label>Category
+                  <select id="template-category" required></select>
+                </label>
+                <label>Priority
+                  <select id="template-priority" required></select>
+                </label>
+              </div>
+              <button type="submit">Create Template</button>
+            </form>
+          </div>
+          <div class="templates-list-section">
+            <p class="eyebrow">Existing Templates</p>
+            <div id="templates-list" class="templates-list"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bulk Actions Toolbar -->
+    <div id="bulk-actions-toolbar" class="bulk-actions-toolbar" style="display: none;">
+      <div class="bulk-actions-content">
+        <p class="eyebrow">Bulk Actions</p>
+        <span class="selected-count">Selected: <span id="selected-count">0</span> tickets</span>
+        <div class="bulk-actions-controls">
+          <button type="button" id="bulk-select-all" onclick="selectAllTickets()">Select All</button>
+          <select id="bulk-actions-dropdown" onchange="executeBulkAction()">
+            <option value="">Select action...</option>
+            <option value="assign">Assign to user</option>
+            <option value="status">Change status</option>
+            <option value="priority">Change priority</option>
+            <option value="delete">Delete tickets</option>
+            <option value="export">Export selected</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent Activity Panel -->
+    <div id="recent-activity-panel" class="modal-overlay" hidden>
+      <div class="modal-card panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Activity Feed</p>
+            <h3>Recent system activity</h3>
+          </div>
+          <button type="button" class="ghost" onclick="showRecentActivity()">Close</button>
+        </div>
+        <div id="activity-feed" class="activity-feed"></div>
+      </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Modal -->
+    <div id="keyboard-shortcuts-modal" class="modal-overlay" hidden>
+      <div class="modal-card panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Keyboard Shortcuts</p>
+            <h3>Productivity shortcuts</h3>
+          </div>
+          <button type="button" class="ghost" onclick="showKeyboardShortcuts()">Close</button>
+        </div>
+        <div id="shortcuts-list" class="shortcuts-list">
+          <div class="shortcut-item">
+            <kbd>Ctrl</kbd> + <kbd>N</kbd>
+            <span>New Ticket</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>Ctrl</kbd> + <kbd>K</kbd>
+            <span>Quick Search</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>Ctrl</kbd> + <kbd>/</kbd>
+            <span>Advanced Search</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>Ctrl</kbd> + <kbd>R</kbd>
+            <span>Refresh Tickets</span>
+          </div>
+          <div class="shortcut-item">
+            <kbd>Esc</kbd>
+            <span>Close Modal/Panel</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Time Tracking Panel -->
+    <div id="time-tracking-panel" class="modal-overlay" hidden>
+      <div class="modal-card panel">
+        <div class="chart-head">
+          <div>
+            <p class="eyebrow">Time Tracking</p>
+            <h3>Track time spent on tickets</h3>
+          </div>
+          <button type="button" class="ghost" onclick="showTimeTracking()">Close</button>
+        </div>
+        <div class="time-tracking-content">
+          <form id="time-log-form" class="stack">
+            <label>Ticket ID
+              <input type="number" id="time-ticket-id" required />
+            </label>
+            <label>Time Spent (hours)
+              <input type="number" id="time-hours" step="0.25" min="0.25" required />
+            </label>
+            <label>Description
+              <textarea id="time-description" rows="3" required></textarea>
+            </label>
+            <button type="submit">Log Time</button>
+          </form>
+          <div class="recent-time-logs">
+            <p class="eyebrow">Recent Time Logs</p>
+            <div id="time-logs-list" class="time-logs-list"></div>
           </div>
         </div>
       </div>
