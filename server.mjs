@@ -105,22 +105,32 @@ const DB_PASS = process.env.DB_PASS || 'u2!h$fH$29QPQcY';
 let pool;
 
 async function createPool() {
-  pool = mysqlCreateConnection({
-    host: DB_HOST,
-    port: DB_PORT,
-    user: DB_USER,
-    password: DB_PASS,
-    database: DB_NAME,
-    namedPlaceholders: true,
-    multipleStatements: true
-  });
-  await pool;
+  const maxRetries = 5;
+  const retryDelayMs = 3000;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      pool = await mysqlCreateConnection({
+        host: DB_HOST,
+        port: DB_PORT,
+        user: DB_USER,
+        password: DB_PASS,
+        database: DB_NAME,
+        namedPlaceholders: true,
+        multipleStatements: true,
+        allowPublicKeyRetrieval: true,
+      });
+      console.log(`[db] Connected to MySQL at ${DB_HOST}:${DB_PORT}`);
+      return;
+    } catch (err) {
+      console.error(`[db] Connection attempt ${attempt}/${maxRetries} failed: ${err.message}`);
+      if (attempt < maxRetries) await new Promise(r => setTimeout(r, retryDelayMs));
+      else throw err;
+    }
+  }
 }
 
 async function getConnection() {
-  if (!pool) {
-    await createPool();
-  }
+  if (!pool) await createPool();
   return pool;
 }
 
