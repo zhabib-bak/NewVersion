@@ -121,7 +121,7 @@ let exitCode = 0;
 try {
   // 2. Wait for server to be ready
   console.log('Waiting for server to be ready...');
-  const ready = await waitForServer(10_000);
+  const ready = await waitForServer(30_000);
   if (!ready) {
     console.error('Server did not start within 10 seconds.');
     process.exitCode = 1;

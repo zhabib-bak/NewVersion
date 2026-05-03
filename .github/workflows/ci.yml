@@ -10,15 +10,16 @@ jobs:
     services:
       mysql:
         image: mysql:8.0
+        command: --default-authentication-plugin=mysql_native_password
         env:
-          MYSQL_ROOT_PASSWORD: ci_root_pass
+          MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: tickets_ci
           MYSQL_USER: ci_user
           MYSQL_PASSWORD: ci_pass
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h 127.0.0.1 -u ci_user -pci_pass"
+          --health-cmd="mysqladmin ping -h localhost"
           --health-interval=10s
           --health-timeout=5s
           --health-retries=5
