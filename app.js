@@ -23,7 +23,31 @@ const state = {
   totalTickets: 0,
   perPage: 50,
   kanbanPages: {},
-  autoRefreshTimer: null
+  autoRefreshTimer: null,
+  // Advanced search features
+  searchQuery: "",
+  searchFilters: {
+    status: [],
+    priority: [],
+    assignee: [],
+    manager: [],
+    category: [],
+    dateRange: { start: "", end: "" },
+    tags: []
+  },
+  savedSearches: [],
+  searchDebounceTimer: null,
+  isAdvancedSearchOpen: false,
+  darkMode: false,
+  // Interactive charts with ApexCharts
+  charts: {
+    weeklyFlow: null,
+    leadTime: null,
+    categoryTrend: null,
+    priority: null,
+    agingBuckets: null,
+    assigneeWorkload: null
+  }
 };
 
 const elements = {
@@ -133,7 +157,25 @@ const elements = {
   importBackMapping: document.querySelector("#import-back-mapping"),
   importResultsContent: document.querySelector("#import-results-content"),
   importDone: document.querySelector("#import-done"),
-  importHistoryList: document.querySelector("#import-history-list")
+  importHistoryList: document.querySelector("#import-history-list"),
+  // Advanced search elements
+  advancedSearchToggle: document.querySelector("#advanced-search-toggle"),
+  advancedSearchPanel: document.querySelector("#advanced-search-panel"),
+  searchInput: document.querySelector("#search-input"),
+  searchQuery: document.querySelector("#search-query"),
+  filterStatus: document.querySelector("#filter-status"),
+  filterPriority: document.querySelector("#filter-priority"),
+  filterAssignee: document.querySelector("#filter-assignee"),
+  filterManager: document.querySelector("#filter-manager"),
+  filterCategory: document.querySelector("#filter-category"),
+  filterDateStart: document.querySelector("#filter-date-start"),
+  filterDateEnd: document.querySelector("#filter-date-end"),
+  filterTags: document.querySelector("#filter-tags"),
+  clearAdvancedSearch: document.querySelector("#clear-advanced-search"),
+  saveSearch: document.querySelector("#save-search"),
+  savedSearchesList: document.querySelector("#saved-searches-list"),
+  // Dark mode toggle
+  darkModeToggle: document.querySelector("#dark-mode-toggle")
 };
 
 init();
@@ -147,6 +189,28 @@ async function init() {
 function bindEvents() {
   elements.loginForm.addEventListener("submit", login);
   elements.logoutButton.addEventListener("click", logout);
+  
+  // Advanced search events
+  if (elements.advancedSearchToggle) {
+    elements.advancedSearchToggle.addEventListener("click", toggleAdvancedSearch);
+  }
+  if (elements.searchQuery) {
+    elements.searchQuery.addEventListener("input", debounceSearch);
+  }
+  if (elements.clearAdvancedSearch) {
+    elements.clearAdvancedSearch.addEventListener("click", clearAdvancedFilters);
+  }
+  if (elements.saveSearch) {
+    elements.saveSearch.addEventListener("click", saveCurrentSearch);
+  }
+  
+  // Dark mode toggle
+  if (elements.darkModeToggle) {
+    elements.darkModeToggle.addEventListener("click", toggleDarkMode);
+  }
+  
+  // Load saved preferences
+  loadUserPreferences();
   elements.passwordResetForm.addEventListener("submit", changePassword);
   elements.filtersForm.addEventListener("input", debounce(() => {
     state.currentPage = 1;
@@ -337,16 +401,28 @@ async function loadBootstrap() {
 function applyRoleVisibility() {
   const isManagerOrAdmin = state.currentUser && (state.currentUser.role === "manager" || state.currentUser.role === "admin");
   const isAdmin = state.currentUser && state.currentUser.role === "admin";
+  
+  // Allow ALL users to access Data Entry, Tickets Management, and Dashboards
   const entryTab = Array.from(elements.tabButtons).find((button) => button.dataset.tab === "entry");
-  if (entryTab) entryTab.style.display = isManagerOrAdmin ? "" : "none";
-  elements.ticketForm.closest(".panel").style.display = isManagerOrAdmin ? "" : "none";
+  if (entryTab) entryTab.style.display = ""; // Show for all users
+  
+  // Show ticket form for all users (they can create tickets)
+  elements.ticketForm.closest(".panel").style.display = "";
+  
+  // Show manager edit form for managers and admins only
   elements.managerEditForm.closest(".manager-panel").style.display = isManagerOrAdmin ? "" : "none";
+  
+  // RESTRICT Roles and Grants to ADMINS ONLY
   const rolesTab = Array.from(elements.tabButtons).find((button) => button.dataset.tab === "roles");
-  if (rolesTab) rolesTab.style.display = isManagerOrAdmin ? "" : "none";
-  if ((state.activeTab === "roles" || state.activeTab === "entry") && !isManagerOrAdmin) {
+  if (rolesTab) rolesTab.style.display = isAdmin ? "" : "none"; // Only admins can see Roles tab
+  
+  // Redirect non-admins away from Roles tab
+  if (state.activeTab === "roles" && !isAdmin) {
     state.activeTab = "tickets";
     renderTabs();
   }
+  
+  // User form and webhooks remain admin-only
   elements.userForm.style.display = isAdmin ? "" : "none";
   elements.webhookForm.style.display = isAdmin ? "" : "none";
 }
@@ -441,8 +517,41 @@ function applySavedView(id) {
 async function refreshTickets() {
   try {
     const params = new URLSearchParams(new FormData(elements.filtersForm));
+    
+    // Add advanced search parameters
+    if (state.searchQuery) {
+      params.set('search', state.searchQuery);
+    }
+    
+    // Add advanced filters
+    if (state.searchFilters.status.length > 0) {
+      params.set('status', state.searchFilters.status.join(','));
+    }
+    if (state.searchFilters.priority.length > 0) {
+      params.set('priority', state.searchFilters.priority.join(','));
+    }
+    if (state.searchFilters.assignee.length > 0) {
+      params.set('assignee', state.searchFilters.assignee.join(','));
+    }
+    if (state.searchFilters.manager.length > 0) {
+      params.set('manager', state.searchFilters.manager.join(','));
+    }
+    if (state.searchFilters.category.length > 0) {
+      params.set('category', state.searchFilters.category.join(','));
+    }
+    if (state.searchFilters.dateRange.start) {
+      params.set('date_start', state.searchFilters.dateRange.start);
+    }
+    if (state.searchFilters.dateRange.end) {
+      params.set('date_end', state.searchFilters.dateRange.end);
+    }
+    if (state.searchFilters.tags.length > 0) {
+      params.set('tags', state.searchFilters.tags.join(','));
+    }
+    
     params.set("page", state.currentPage);
     params.set("per_page", String(state.perPage));
+    
     const data = await apiFetch(`/api/tickets?${params.toString()}`);
     state.tickets = data.tickets;
     state.currentPage = data.page;
@@ -762,10 +871,11 @@ function renderDashboard() {
   if (kpiRow) {
     const kpis = [
       { label: 'Total',       value: t.total,             sub: 'All time',                                                  color: 'neutral', icon: '≡' },
-      { label: 'Open',        value: t.open,              sub: t.open > 10 ? 'High volume' : 'Under control',               color: t.open > 10 ? 'warning' : 'success', icon: '○', filter: 'status=Open' },
+      { label: 'Open',        value: t.open,              sub: `↑${t.openedThisWeek} this week`,                           color: t.open > 10 ? 'warning' : 'success', icon: '○', filter: 'status=Open' },
       { label: 'In Progress', value: t.inProgress,        sub: t.inProgress > 0 ? `${t.inProgress} active` : 'None active', color: 'brand', icon: '◑', filter: 'status=In Progress' },
       { label: 'Blocked',     value: t.blocked,           sub: t.blocked > 0 ? 'Needs attention' : 'All clear',             color: t.blocked > 0 ? 'danger' : 'success', icon: '⊘', filter: 'status=Blocked' },
       { label: 'P1 Open',     value: t.p1Open,            sub: t.p1Open > 0 ? 'Critical' : 'None critical',                 color: t.p1Open > 0 ? 'danger' : 'success', icon: '▲', filter: 'priority=P1 high' },
+      { label: 'SLA Breached', value: t.breachedOpen,     sub: t.breachedOpen > 0 ? 'Needs attention' : 'All within SLA',   color: t.breachedOpen > 0 ? 'danger' : 'success', icon: '⚠', filter: 'status=Blocked' },
       { label: 'Avg Lead Time',value: `${t.avgLeadTime}d`, sub: t.avgLeadTime <= 3 ? 'Fast resolution' : t.avgLeadTime <= 7 ? 'Moderate' : 'Review process', color: t.avgLeadTime <= 3 ? 'success' : t.avgLeadTime <= 7 ? 'warning' : 'danger', icon: '⏱' },
       { label: 'Reopen Rate', value: `${t.reopenRate}%`,  sub: t.reopenRate <= 5 ? 'Quality is good' : t.reopenRate <= 15 ? 'Worth monitoring' : 'Quality issue', color: t.reopenRate <= 5 ? 'success' : t.reopenRate <= 15 ? 'warning' : 'danger', icon: '↺' },
     ];
@@ -793,9 +903,15 @@ function renderDashboard() {
   const atRiskCount = document.getElementById('at-risk-count');
   if (atRiskPanel) atRiskPanel.hidden = !(d.atRisk && d.atRisk.length);
   if (atRiskCount && d.atRisk) atRiskCount.textContent = `${d.atRisk.length} ticket${d.atRisk.length !== 1 ? 's' : ''}`;
+  const resRateEl = document.getElementById('resolution-rate-badge');
+  if (resRateEl && d.totals) resRateEl.textContent = `${d.totals.resolutionRate}% resolved`;
 
-  // Flow chart + delta badge
-  renderSvgFlowChart(elements.weeklyFlowChart, d.weeklyFlow);
+  // Interactive Flow chart + delta badge
+  createInteractiveWeeklyFlowChart({
+    weeks: d.weeklyFlow?.map(w => w.label) || [],
+    opened: d.weeklyFlow?.map(w => w.opened) || [],
+    closed: d.weeklyFlow?.map(w => w.closed) || []
+  });
   const flowDelta = document.getElementById('flow-net-delta');
   if (flowDelta && d.weeklyFlow && d.weeklyFlow.length) {
     const last = d.weeklyFlow[d.weeklyFlow.length - 1];
@@ -804,10 +920,30 @@ function renderDashboard() {
     flowDelta.className = `net-delta-badge ${delta > 0 ? 'success' : delta < 0 ? 'warning' : 'neutral'}`;
   }
 
-  // Comparison charts
-  renderLeadTimeChart(document.getElementById('lead-time-chart'), d.leadTimeDistribution);
-  renderCategoryChart(document.getElementById('category-trend-chart'), d.openByCategory);
-  renderResolutionSummary(document.getElementById('closed-assignee-chart'), d.totals);
+  // Interactive Comparison charts
+  createInteractiveLeadTimeChart({
+    labels: (d.leadTimeDistribution || []).map(d => d.label),
+    values: (d.leadTimeDistribution || []).map(d => d.value)
+  });
+  
+  createInteractiveCategoryChart({
+    categories: d.categoryTrend || [],
+  });
+  
+  const priorityMap = {};
+  (d.openByPriority || []).forEach(p => { priorityMap[p.label] = p.value; });
+  createInteractivePriorityChart({
+    values: [
+      priorityMap['P1 high'] || 0,
+      priorityMap['P2 medium'] || 0,
+      priorityMap['P3 low'] || 0
+    ]
+  });
+  
+  createInteractiveAgingChart({
+    labels: (d.backlogAgingBuckets || []).map(b => b.label.replace(' days', 'd')),
+    values: (d.backlogAgingBuckets || []).map(b => b.value)
+  });
 
   // Workload table
   renderWorkloadTable(document.getElementById('workload-table'), d.workload);
@@ -1052,7 +1188,7 @@ function renderActivityFeed(container, data) {
         <p class="af-ticket">#${escapeHtml(String(item.jd_ticket_number || item.ticket_id))}
           <span class="af-desc">${escapeHtml((item.description || '').slice(0, 60))}${(item.description || '').length > 60 ? '…' : ''}</span>
         </p>
-        <p class="af-comment">${escapeHtml((item.comment || '').slice(0, 90))}${(item.comment || '').length > 90 ? '…' : ''}</p>
+        <p class="af-comment">${escapeHtml((item.body || '').slice(0, 90))}${(item.body || '').length > 90 ? '…' : ''}</p>
         <p class="af-meta">
           <span class="status-pill status-pill--${statusSlug(item.status)}">${escapeHtml(item.status || '')}</span>
           <span class="muted">${formatIsoDate(item.created_at)}</span>
@@ -2088,7 +2224,7 @@ function closeTicketDetail(options = {}) {
   elements.ticketDetail.hidden = true;
   elements.detailNewComment.value = "";
   elements.commentsList.innerHTML = "";
-  if (!preserveHistory && window.location.hash.startsWith("#ticket-")) {
+  if (!preserveHistory && window.location.hash && window.location.hash.startsWith("#ticket-")) {
     history.replaceState(null, "", window.location.pathname + window.location.search);
   }
 }
@@ -2145,6 +2281,7 @@ function renderBadge(text, tone) {
 }
 
 function priorityTone(priority) {
+  if (!priority) return "success";
   if (priority.startsWith("P1")) return "danger";
   if (priority.startsWith("P2")) return "warning";
   return "success";
@@ -2203,5 +2340,697 @@ function escapeHtml(value) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+    .replaceAll("'", "&#39;");
 }
+
+// Advanced Search Functions
+function toggleAdvancedSearch() {
+  state.isAdvancedSearchOpen = !state.isAdvancedSearchOpen;
+  elements.advancedSearchPanel.hidden = !state.isAdvancedSearchOpen;
+  if (state.isAdvancedSearchOpen) {
+    elements.searchQuery.focus();
+  }
+}
+
+function debounceSearch() {
+  clearTimeout(state.searchDebounceTimer);
+  state.searchDebounceTimer = setTimeout(() => {
+    state.searchQuery = elements.searchQuery.value;
+    state.currentPage = 1;
+    refreshTickets();
+  }, 300);
+}
+
+function clearAdvancedFilters() {
+  state.searchQuery = "";
+  state.searchFilters = {
+    status: [],
+    priority: [],
+    assignee: [],
+    manager: [],
+    category: [],
+    dateRange: { start: "", end: "" },
+    tags: []
+  };
+  
+  // Reset form elements
+  if (elements.searchQuery) elements.searchQuery.value = "";
+  if (elements.filterStatus) elements.filterStatus.selectedIndex = 0;
+  if (elements.filterPriority) elements.filterPriority.selectedIndex = 0;
+  if (elements.filterAssignee) elements.filterAssignee.selectedIndex = 0;
+  if (elements.filterManager) elements.filterManager.selectedIndex = 0;
+  if (elements.filterCategory) elements.filterCategory.selectedIndex = 0;
+  if (elements.filterDateStart) elements.filterDateStart.value = "";
+  if (elements.filterDateEnd) elements.filterDateEnd.value = "";
+  if (elements.filterTags) elements.filterTags.value = "";
+  
+  state.currentPage = 1;
+  refreshTickets();
+  showMessage("Advanced filters cleared");
+}
+
+async function saveCurrentSearch() {
+  const name = window.prompt("Name for this saved search:");
+  if (!name) return;
+  
+  const searchConfig = {
+    name,
+    query: state.searchQuery,
+    filters: { ...state.searchFilters }
+  };
+  
+  try {
+    // Save to localStorage for now (could be moved to backend)
+    const savedSearches = JSON.parse(localStorage.getItem('savedSearches') || '[]');
+    savedSearches.push(searchConfig);
+    localStorage.setItem('savedSearches', JSON.stringify(savedSearches));
+    state.savedSearches = savedSearches;
+    renderSavedSearches();
+    showMessage("Search saved successfully");
+  } catch (error) {
+    showMessage("Failed to save search", true);
+  }
+}
+
+function renderSavedSearches() {
+  if (!elements.savedSearchesList) return;
+  
+  elements.savedSearchesList.innerHTML = state.savedSearches.map((search, index) => `
+    <div class="saved-search-item">
+      <button class="saved-search-btn" data-index="${index}">
+        ${search.name}
+      </button>
+      <button class="delete-search-btn" data-index="${index}" title="Delete search">
+        ❌
+      </button>
+    </div>
+  `).join('');
+  
+  // Add event listeners
+  elements.savedSearchesList.querySelectorAll('.saved-search-btn').forEach(btn => {
+    btn.addEventListener('click', () => loadSavedSearch(parseInt(btn.dataset.index)));
+  });
+  
+  elements.savedSearchesList.querySelectorAll('.delete-search-btn').forEach(btn => {
+    btn.addEventListener('click', () => deleteSavedSearch(parseInt(btn.dataset.index)));
+  });
+}
+
+function loadSavedSearch(index) {
+  const search = state.savedSearches[index];
+  if (!search) return;
+  
+  state.searchQuery = search.query;
+  state.searchFilters = { ...search.filters };
+  
+  // Update form elements
+  if (elements.searchQuery) elements.searchQuery.value = search.query;
+  if (elements.filterStatus) elements.filterStatus.value = search.filters.status?.[0] || '';
+  if (elements.filterPriority) elements.filterPriority.value = search.filters.priority?.[0] || '';
+  if (elements.filterAssignee) elements.filterAssignee.value = search.filters.assignee?.[0] || '';
+  if (elements.filterManager) elements.filterManager.value = search.filters.manager?.[0] || '';
+  if (elements.filterCategory) elements.filterCategory.value = search.filters.category?.[0] || '';
+  if (elements.filterDateStart) elements.filterDateStart.value = search.filters.dateRange?.start || '';
+  if (elements.filterDateEnd) elements.filterDateEnd.value = search.filters.dateRange?.end || '';
+  if (elements.filterTags) elements.filterTags.value = search.filters.tags?.join(', ') || '';
+  
+  state.currentPage = 1;
+  refreshTickets();
+  showMessage(`Loaded search: ${search.name}`);
+}
+
+function deleteSavedSearch(index) {
+  if (!confirm('Delete this saved search?')) return;
+  
+  state.savedSearches.splice(index, 1);
+  localStorage.setItem('savedSearches', JSON.stringify(state.savedSearches));
+  renderSavedSearches();
+  showMessage('Search deleted');
+}
+
+// Dark Mode Functions
+function toggleDarkMode() {
+  state.darkMode = !state.darkMode;
+  document.body.classList.toggle('dark-mode', state.darkMode);
+  localStorage.setItem('darkMode', state.darkMode);
+  updateDarkModeToggle();
+  updateChartsTheme();
+}
+
+function loadUserPreferences() {
+  // Load dark mode preference
+  const darkMode = localStorage.getItem('darkMode') === 'true';
+  state.darkMode = darkMode;
+  document.body.classList.toggle('dark-mode', state.darkMode);
+  updateDarkModeToggle();
+  
+  // Load saved searches
+  const savedSearches = JSON.parse(localStorage.getItem('savedSearches') || '[]');
+  state.savedSearches = savedSearches;
+  renderSavedSearches();
+}
+
+function updateDarkModeToggle() {
+  if (!elements.darkModeToggle) return;
+  elements.darkModeToggle.textContent = state.darkMode ? '🌙' : '☀️';
+  elements.darkModeToggle.title = state.darkMode ? 'Switch to light mode' : 'Switch to dark mode';
+}
+
+// Professional ApexCharts Functions
+function createInteractiveWeeklyFlowChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+
+  const ctx = document.getElementById('weekly-flow-chart');
+  if (!ctx) return;
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
+  if (state.charts.weeklyFlow) {
+    state.charts.weeklyFlow.updateSeries([
+      { name: 'Opened', data: data.opened || [] },
+      { name: 'Closed', data: data.closed || [] }
+    ]);
+    state.charts.weeklyFlow.updateOptions({
+      xaxis: { categories: data.weeks || [] },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
+  }
+
+  const options = {
+    series: [
+      {
+        name: 'Opened',
+        data: data.opened || []
+      },
+      {
+        name: 'Closed',
+        data: data.closed || []
+      }
+    ],
+    chart: {
+      type: 'area',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true,
+          selection: true,
+          zoom: true,
+          zoomin: true,
+          zoomout: true,
+          pan: true,
+          reset: true
+        }
+      },
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800,
+        animateGradually: {
+          enabled: true,
+          delay: 150
+        },
+        dynamicAnimation: {
+          enabled: true,
+          speed: 350
+        }
+      }
+    },
+    colors: ['#4ecdc4', '#74b9ff'],
+    fill: {
+      type: 'gradient',
+      gradient: {
+        shadeIntensity: 1,
+        opacityFrom: 0.7,
+        opacityTo: 0.3,
+        stops: [0, 90, 100]
+      }
+    },
+    dataLabels: {
+      enabled: false
+    },
+    stroke: {
+      curve: 'smooth',
+      width: 3
+    },
+    xaxis: {
+      categories: data.weeks || [],
+      labels: {
+        style: {
+          colors: mutedColor
+        }
+      }
+    },
+    yaxis: {
+      title: {
+        text: 'Tickets',
+        style: {
+          color: mutedColor
+        }
+      },
+      labels: {
+        style: {
+          colors: mutedColor
+        }
+      }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      x: {
+        format: 'MMM dd, yyyy'
+      },
+      y: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    legend: {
+      position: 'top',
+      labels: {
+        colors: textColor
+      }
+    },
+    grid: {
+      borderColor: borderColor,
+      strokeDashArray: 4
+    }
+  };
+
+  state.charts.weeklyFlow = new ApexCharts(ctx, options);
+  state.charts.weeklyFlow.render();
+}
+
+function createInteractiveLeadTimeChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+
+  const ctx = document.getElementById('lead-time-chart');
+  if (!ctx) return;
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
+  if (state.charts.leadTime) {
+    state.charts.leadTime.updateSeries([{ name: 'Resolution Time', data: data.values || [] }]);
+    state.charts.leadTime.updateOptions({
+      xaxis: { categories: data.labels || ['<1d', '1-3d', '3-7d', '7-14d', '>14d'] },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
+  }
+
+  const options = {
+    series: [{
+      name: 'Resolution Time',
+      data: data.values || []
+    }],
+    chart: {
+      type: 'bar',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
+        }
+      },
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800
+      }
+    },
+    colors: ['#6bcf7f', '#4ecdc4', '#ffd93d', '#ff9f43', '#ff6b6b'],
+    plotOptions: {
+      bar: {
+        borderRadius: 8,
+        horizontal: false,
+        distributed: true,
+        dataLabels: {
+          position: 'top'
+        }
+      }
+    },
+    dataLabels: {
+      enabled: true,
+      formatter: function(val) {
+        return val + ' tickets';
+      },
+      offsetY: -20,
+      style: {
+        fontSize: '12px',
+        colors: [textColor]
+      }
+    },
+    xaxis: {
+      categories: data.labels || ['<1d', '1-3d', '3-7d', '7-14d', '>14d'],
+      labels: {
+        style: {
+          colors: mutedColor
+        }
+      }
+    },
+    yaxis: {
+      title: {
+        text: 'Tickets',
+        style: {
+          color: mutedColor
+        }
+      },
+      labels: {
+        style: {
+          colors: mutedColor
+        }
+      }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      y: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    grid: {
+      borderColor: borderColor,
+      strokeDashArray: 4
+    }
+  };
+
+  state.charts.leadTime = new ApexCharts(ctx, options);
+  state.charts.leadTime.render();
+}
+
+function createInteractiveCategoryChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+
+  const ctx = document.getElementById('category-trend-chart');
+  if (!ctx) return;
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+
+  if (state.charts.categoryTrend) {
+    state.charts.categoryTrend.updateSeries([
+      { name: 'This Month', data: (data.categories || []).map(c => c.thisMonth || 0) },
+      { name: 'Last Month', data: (data.categories || []).map(c => c.prevMonth || 0) }
+    ]);
+    state.charts.categoryTrend.updateOptions({
+      xaxis: { categories: (data.categories || []).map(c => c.label) },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
+  }
+
+  const options = {
+    series: [
+      { name: 'This Month', data: (data.categories || []).map(c => c.thisMonth || 0) },
+      { name: 'Last Month', data: (data.categories || []).map(c => c.prevMonth || 0) }
+    ],
+    chart: {
+      type: 'bar',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
+        }
+      },
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800
+      }
+    },
+    colors: ['#4ecdc4', '#74b9ff'],
+    plotOptions: {
+      bar: {
+        borderRadius: 4,
+        horizontal: false,
+        grouped: true,
+        dataLabels: { position: 'top' }
+      }
+    },
+    dataLabels: {
+      enabled: false
+    },
+    xaxis: {
+      categories: (data.categories || []).map(c => c.label),
+      labels: {
+        style: {
+          colors: mutedColor
+        },
+        rotate: -35
+      }
+    },
+    yaxis: {
+      labels: {
+        style: {
+          colors: mutedColor
+        }
+      }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      y: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    legend: {
+      position: 'top',
+      labels: {
+        colors: textColor
+      }
+    }
+  };
+
+  state.charts.categoryTrend = new ApexCharts(ctx, options);
+  state.charts.categoryTrend.render();
+}
+
+function createInteractivePriorityChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+
+  const ctx = document.getElementById('priority-chart');
+  if (!ctx) return;
+
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
+  if (state.charts.priority) {
+    state.charts.priority.updateSeries(data.values || [0, 0, 0]);
+    state.charts.priority.updateOptions({
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
+  }
+
+  const options = {
+    series: data.values || [0, 0, 0],
+    chart: {
+      type: 'radar',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
+        }
+      },
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800
+      }
+    },
+    colors: ['#ff6b6b', '#ffd93d', '#6bcf7f'],
+    labels: ['P1 High', 'P2 Medium', 'P3 Low'],
+    dataLabels: {
+      enabled: true,
+      formatter: function(val) {
+        return val + ' tickets';
+      },
+      style: {
+        fontSize: '11px',
+        colors: [textColor]
+      }
+    },
+    plotOptions: {
+      radar: {
+        size: 120,
+        polygons: {
+          strokeColors: borderColor,
+          connectorColors: borderColor,
+          fill: {
+            colors: [state.darkMode ? 'rgba(78, 205, 196, 0.1)' : 'rgba(50, 180, 141, 0.1)']
+          }
+        }
+      }
+    },
+    stroke: {
+      show: true,
+      width: 3,
+      colors: ['#ff6b6b', '#ffd93d', '#6bcf7f']
+    },
+    fill: {
+      opacity: 0.8
+    },
+    markers: {
+      size: 5,
+      colors: ['#ff6b6b', '#ffd93d', '#6bcf7f'],
+      strokeColors: state.darkMode ? '#2d2d2d' : '#0f1722',
+      strokeWidth: 2
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      y: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    legend: {
+      position: 'bottom',
+      labels: {
+        colors: textColor
+      }
+    }
+  };
+
+  state.charts.priority = new ApexCharts(ctx, options);
+  state.charts.priority.render();
+}
+
+function createInteractiveAgingChart(data) {
+  // Check if ApexCharts is available
+  if (typeof ApexCharts === 'undefined') {
+    console.error('ApexCharts is not loaded');
+    return;
+  }
+
+  const ctx = document.getElementById('aging-buckets-chart');
+  if (!ctx) return;
+
+  const mutedColor = getComputedStyle(document.body).getPropertyValue('--muted').trim();
+  const textColor = getComputedStyle(document.body).getPropertyValue('--text').trim();
+  const borderColor = getComputedStyle(document.body).getPropertyValue('--border').trim();
+
+  if (state.charts.agingBuckets) {
+    state.charts.agingBuckets.updateSeries([{ name: 'Open Tickets', data: data.values || [] }]);
+    state.charts.agingBuckets.updateOptions({
+      xaxis: { categories: data.labels || ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'] },
+      tooltip: { theme: state.darkMode ? 'dark' : 'light' }
+    }, false, true);
+    return;
+  }
+
+  const options = {
+    series: [{
+      name: 'Open Tickets',
+      data: data.values || []
+    }],
+    chart: {
+      type: 'bar',
+      height: 300,
+      toolbar: {
+        show: true,
+        tools: {
+          download: true
+        }
+      },
+      animations: {
+        enabled: true,
+        easing: 'easeinout',
+        speed: 800
+      }
+    },
+    colors: ['#4ecdc4'],
+    plotOptions: {
+      bar: {
+        borderRadius: 8,
+        horizontal: true,
+        dataLabels: {
+          position: 'right'
+        }
+      }
+    },
+    dataLabels: {
+      enabled: true,
+      formatter: function(val) {
+        return val + ' tickets';
+      },
+      style: {
+        fontSize: '12px',
+        colors: [textColor]
+      }
+    },
+    xaxis: {
+      categories: data.labels || ['0-2d', '3-7d', '8-14d', '15-30d', '>30d'],
+      labels: {
+        style: {
+          colors: mutedColor
+        }
+      }
+    },
+    yaxis: {
+      title: {
+        text: 'Age Range',
+        style: {
+          color: mutedColor
+        }
+      },
+      labels: {
+        style: {
+          colors: mutedColor
+        }
+      }
+    },
+    tooltip: {
+      theme: state.darkMode ? 'dark' : 'light',
+      x: {
+        formatter: function(value) {
+          return value + ' tickets';
+        }
+      }
+    },
+    grid: {
+      borderColor: borderColor,
+      strokeDashArray: 4
+    }
+  };
+
+  state.charts.agingBuckets = new ApexCharts(ctx, options);
+  state.charts.agingBuckets.render();
+}
+
+// Update all charts when dark mode changes
+function updateChartsTheme() {
+  const theme = state.darkMode ? 'dark' : 'light';
+  const options = { tooltip: { theme } };
+  Object.values(state.charts).forEach(chart => {
+    if (chart && typeof chart.updateOptions === 'function') {
+      chart.updateOptions(options, false, false);
+    }
+  });
+}
+

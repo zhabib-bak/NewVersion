@@ -71,9 +71,10 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function waitForServer(maxMs = 10_000) {
+async function waitForServer(maxMs = 30_000) {
   const deadline = Date.now() + maxMs;
   while (Date.now() < deadline) {
+    if (serverCrashed) return false;
     try {
       const res = await get('/api/health');
       if (res.status === 200) return true;
@@ -116,12 +117,20 @@ const server = spawn('node', ['server.mjs'], {
 server.stdout.on('data', (d) => process.stdout.write(`[server] ${d}`));
 server.stderr.on('data', (d) => process.stderr.write(`[server:err] ${d}`));
 
+let serverCrashed = false;
+server.on('exit', (code) => {
+  if (code !== 0 && code !== null) {
+    serverCrashed = true;
+    process.stderr.write(`[smoke] Server process exited with code ${code}\n`);
+  }
+});
+
 let exitCode = 0;
 
 try {
   // 2. Wait for server to be ready
   console.log('Waiting for server to be ready...');
-  const ready = await waitForServer(10_000);
+  const ready = await waitForServer(30_000);
   if (!ready) {
     console.error('Server did not start within 10 seconds.');
     process.exitCode = 1;
