@@ -291,7 +291,7 @@ const stmtUsers = {
     FROM user_accounts
     ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END, name ASC
   `),
-  byName: async (name) => (await query('SELECT * FROM user_accounts WHERE name = ?', [name]))[0],
+  byName: async (name) => (await query('SELECT * FROM user_accounts WHERE LOWER(name) = LOWER(?)', [name]))[0],
   byId: async (id) => (await query('SELECT * FROM user_accounts WHERE id = ?', [id]))[0],
   insert: async (name, role, active, auth_secret_hash, password_reset_required, email) => 
     await query('INSERT IGNORE INTO user_accounts (name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)', [name, role, active, auth_secret_hash, password_reset_required, email]),
@@ -1417,7 +1417,7 @@ const server = createServer(async (request, response) => {
         throw new HttpError(401, 'Invalid credentials.');
       }
       
-      // NO MORE ACCOUNT LOCKING - Remove all lockout logic
+      // NO ACCOUNT LOCKING - Simple login validation
       const validModern = verifyPassword(password, user.auth_secret_hash);
       const validLegacy = !validModern && !!user.auth_pin_hash && user.auth_pin_hash === hashLegacyPin(password);
       

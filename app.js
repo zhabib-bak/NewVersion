@@ -667,7 +667,12 @@ async function login(event) {
   });
   const data = await response.json();
   if (!response.ok) {
-    showMessage(data.error || "Error de acceso.", true);
+    // Simple error message - no account blocking
+    const errorEl = document.getElementById('login-error');
+    if (errorEl) {
+      errorEl.textContent = data.error || 'Error de acceso.';
+      errorEl.hidden = false;
+    }
     return;
   }
   if (remember) {
@@ -1186,7 +1191,6 @@ async function updateTicketStatus(ticket, targetStatus) {
     showMessage(error.message, true);
   }
 }
-
 function renderDashboard() {
   if (!state.dashboard) return;
   renderTicketsToolbar();
