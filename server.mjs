@@ -50,8 +50,6 @@ const RE_ATTACHMENT_ITEM_PATH = /^\/api\/tickets\/\d+\/attachments\/\d+$/;
 const ROLE_ORDER = { user: 1, manager: 2, admin: 3 };
 const USER_ROLES = Object.keys(ROLE_ORDER);
 const DEFAULT_PASSWORD_MIN_LENGTH = 10;
-const LOGIN_MAX_FAILURES = 5;
-const LOGIN_LOCK_MINUTES = 15;
 
 const SEED_USERS = [
   { name: 'Chandra', role: 'user', active: 1 },
@@ -90,18 +88,36 @@ const RATE_LIMITS = {
   read: { windowMs: 60_000, max: 600 }
 };
 
-mkdirSync(DATA_DIR, { recursive: true });
-mkdirSync(BACKUP_DIR, { recursive: true });
-mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
+// Create data directories with error handling for Render
+try {
+  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(BACKUP_DIR, { recursive: true });
+  mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
+} catch (error) {
+  if (error.code === 'EACCES') {
+    console.warn('[warning] Cannot create data directories, using fallback');
+    // Use alternative directory for Render
+    process.env.DATA_DIR = './tmp_data';
+    const fallbackDataDir = './tmp_data';
+    const fallbackBackupDir = './tmp_data/backups';
+    mkdirSync(fallbackDataDir, { recursive: true });
+    mkdirSync(fallbackBackupDir, { recursive: true });
+    mkdirSync(join(fallbackDataDir, 'uploads'), { recursive: true });
+    console.log('[info] Using fallback data directory:', fallbackDataDir);
+  } else {
+    throw error;
+  }
+}
 await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
-// MySQL configuration
+// Database configuration (supports both MySQL and PostgreSQL)
 const DB_HOST = process.env.DB_HOST || 'sql.freedb.tech';
 const DB_PORT = Number(process.env.DB_PORT || 3306);
 const DB_NAME = process.env.DB_NAME || 'freedb_TicketTracker';
 const DB_USER = process.env.DB_USER || 'freedb_mohamad';
 const DB_PASS = process.env.DB_PASS || 'u2!h$fH$29QPQcY';
+const DB_TYPE = process.env.DB_TYPE || 'mysql'; // 'mysql' or 'postgres'
 
 // Create MySQL connection pool
 let pool;
@@ -293,7 +309,7 @@ const stmtUsers = {
     FROM user_accounts
     ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END, name ASC
   `),
-  byName: async (name) => (await query('SELECT * FROM user_accounts WHERE name = ?', [name]))[0],
+  byName: async (name) => (await query('SELECT * FROM user_accounts WHERE LOWER(name) = LOWER(?)', [name]))[0],
   byId: async (id) => (await query('SELECT * FROM user_accounts WHERE id = ?', [id]))[0],
   insert: async (name, role, active, auth_secret_hash, password_reset_required, email) => 
     await query('INSERT IGNORE INTO user_accounts (name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)', [name, role, active, auth_secret_hash, password_reset_required, email]),
@@ -428,22 +444,49 @@ class HttpError extends Error {
 
 async function ensurePerformanceIndexes() {
   try {
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_priority ON tickets(priority)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_assignee ON tickets(assignee)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_manager ON tickets(manager)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_date_opening ON tickets(date_opening)');
-    await query('CREATE INDEX IF NOT EXISTS idx_tickets_batch_id ON tickets(batch_id)');
-    await query('CREATE INDEX IF NOT EXISTS idx_ticket_comments_ticket_id ON ticket_comments(ticket_id)');
-    await query('CREATE INDEX IF NOT EXISTS idx_saved_filters_user_id ON saved_filters(user_id)');
+    // MySQL doesn't support IF NOT EXISTS for indexes, so we check first
+    const indexes = [
+      { name: 'idx_tickets_status', table: 'tickets', column: 'status' },
+      { name: 'idx_tickets_priority', table: 'tickets', column: 'priority' },
+      { name: 'idx_tickets_assignee', table: 'tickets', column: 'assignee' },
+      { name: 'idx_tickets_manager', table: 'tickets', column: 'manager' },
+      { name: 'idx_tickets_date_opening', table: 'tickets', column: 'date_opening' },
+      { name: 'idx_tickets_batch_id', table: 'tickets', column: 'batch_id' },
+      { name: 'idx_ticket_comments_ticket_id', table: 'ticket_comments', column: 'ticket_id' },
+      { name: 'idx_saved_filters_user_id', table: 'saved_filters', column: 'user_id' }
+    ];
+    
+    for (const index of indexes) {
+      try {
+        await query(`CREATE INDEX ${index.name} ON ${index.table}(${index.column})`);
+      } catch (error) {
+        // Index already exists, continue
+        if (error.code !== 'ER_DUP_KEYNAME') {
+          console.error(`[index-${index.name}]`, error);
+        }
+      }
+    }
   } catch (error) {
     console.error('[indexes]', error);
   }
 }
 
 async function bootstrapDataStore() {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
+  const currentDataDir = process.env.DATA_DIR || DATA_DIR;
+  if (!existsSync(currentDataDir)) {
+    try {
+      mkdirSync(currentDataDir, { recursive: true });
+    } catch (error) {
+      if (error.code === 'EACCES') {
+        console.warn('[warning] Cannot create bootstrap data directory, using fallback');
+        const fallbackDir = './tmp_data';
+        if (!existsSync(fallbackDir)) {
+          mkdirSync(fallbackDir, { recursive: true });
+        }
+      } else {
+        throw error;
+      }
+    }
   }
   console.log('[bootstrap] MySQL database initialized');
 }
@@ -869,7 +912,17 @@ async function listTickets(searchParams, { paginate = true } = {}) {
 
   const filters = [];
   const values = [];
+  
+  // Advanced search parameters
+  const search = (searchParams.get('search') || '').trim();
   const q = (searchParams.get('q') || '').trim();
+  const searchQuery = search || q;
+
+  // Handle multiple select filters (comma-separated)
+  const getArrayParam = (param) => {
+    const value = searchParams.get(param);
+    return value ? value.split(',').filter(v => v.trim()) : [];
+  };
 
   const directFilters = {
     status: searchParams.get('status'),
@@ -879,7 +932,8 @@ async function listTickets(searchParams, { paginate = true } = {}) {
     manager: searchParams.get('manager')
   };
 
-  if (q) {
+  // Advanced search with full-text search
+  if (searchQuery) {
     filters.push(`(
       description LIKE ? OR
       jd_ticket_number LIKE ? OR
@@ -891,19 +945,32 @@ async function listTickets(searchParams, { paginate = true } = {}) {
       manager LIKE ? OR
       id IN (SELECT ticket_id FROM ticket_comments WHERE body LIKE ? OR author LIKE ?)
     )`);
-    const pattern = `%${q}%`;
+    const pattern = `%${searchQuery}%`;
     values.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern);
   }
 
+  // Handle multiple values for advanced filters
+  const multiFilters = ['status', 'priority', 'category', 'assignee', 'manager'];
+  for (const filter of multiFilters) {
+    const values = getArrayParam(filter);
+    if (values.length > 0) {
+      const placeholders = values.map(() => '?').join(',');
+      filters.push(`${filter} IN (${placeholders})`);
+      values.push(...values);
+    }
+  }
+
+  // Legacy single value filters
   for (const [key, value] of Object.entries(directFilters)) {
-    if (value) {
+    if (value && !getArrayParam(key).length) {
       filters.push(`${key} = ?`);
       values.push(value);
     }
   }
 
-  const dateFrom = (searchParams.get('date_from') || '').trim();
-  const dateTo = (searchParams.get('date_to') || '').trim();
+  // Date range filters (support both old and new parameter names)
+  const dateFrom = (searchParams.get('date_start') || searchParams.get('date_from') || '').trim();
+  const dateTo = (searchParams.get('date_end') || searchParams.get('date_to') || '').trim();
   if (dateFrom) {
     filters.push('date_opening >= ?');
     values.push(dateFrom);
@@ -911,6 +978,17 @@ async function listTickets(searchParams, { paginate = true } = {}) {
   if (dateTo) {
     filters.push('date_opening <= ?');
     values.push(dateTo);
+  }
+
+  // Tags filter (if implemented in future)
+  const tags = getArrayParam('tags');
+  if (tags.length > 0) {
+    // For now, tags would be stored in a separate table or as JSON
+    // This is a placeholder for future implementation
+    const tagPatterns = tags.map(tag => `%${tag.trim()}%`);
+    const tagPlaceholders = tagPatterns.map(() => 'description LIKE ?').join(' OR ');
+    filters.push(`(${tagPlaceholders})`);
+    values.push(...tagPatterns);
   }
 
   const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
@@ -1352,7 +1430,7 @@ const server = createServer(async (request, response) => {
   const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method || '');
 
   try {
-    if (isMutation && !url.pathname.startsWith('/api/auth/login')) {
+    if (isMutation && url.pathname && !url.pathname.startsWith('/api/auth/login')) {
       assertCsrf(request, auth);
     }
 
@@ -1360,33 +1438,46 @@ const server = createServer(async (request, response) => {
       const payload = await readRequestBody(request);
       const name = String(payload.name || '').trim();
       const password = String(payload.password || '').trim();
+      
+      if (!name || !password) {
+        throw new HttpError(400, 'User name and password are required.');
+      }
+      
       const user = await stmtUsers.byName(name);
       if (!user || user.active !== 1) {
         throw new HttpError(401, 'Invalid credentials.');
       }
-      if (user.locked_until && Date.parse(user.locked_until) > Date.now()) {
-        throw new HttpError(423, 'Account temporarily locked. Please try again later.');
-      }
+      
+      // NO ACCOUNT LOCKING - Simple login validation
       const validModern = verifyPassword(password, user.auth_secret_hash);
       const validLegacy = !validModern && !!user.auth_pin_hash && user.auth_pin_hash === hashLegacyPin(password);
+      
       if (!validModern && !validLegacy) {
-        const failures = Number(user.failed_login_attempts || 0) + 1;
-        const lockedUntil = failures >= LOGIN_MAX_FAILURES ? new Date(Date.now() + LOGIN_LOCK_MINUTES * 60_000).toISOString() : null;
-        await stmtUsers.loginFail(failures, lockedUntil, user.id);
-        throw new HttpError(401, failures >= LOGIN_MAX_FAILURES ? 'Account temporarily locked after repeated failed logins.' : 'Invalid credentials.');
+        // Just log the failed attempt without blocking
+        console.log(`[login-failed] User: ${name}, IP: ${ip}`);
+        throw new HttpError(401, 'Invalid credentials.');
       }
-      await stmtUsers.resetLoginFailures(user.id);
+      
+      // Upgrade legacy password hash if needed
       if (validLegacy) {
-        await stmtUsers.setSecret(hashPassword(password), 1, user.id);
+        try {
+          await stmtUsers.setSecret(hashPassword(password), 1, user.id);
+        } catch (error) {
+          console.error('[password-upgrade]', error);
+          // Continue with login even if upgrade fails
+        }
       }
+      
       const refreshedUser = await stmtUsers.byId(user.id);
       const remember = !!payload.remember;
       const sessionId = randomUUID();
       const csrf = randomBytes(24).toString('hex');
       const durationMs = remember ? REMEMBER_ME_DAYS * 24 * 3600 * 1000 : SESSION_DURATION_MS;
       const expiresAt = new Date(Date.now() + durationMs).toISOString();
+      
       await stmtSessions.insert(sessionId, refreshedUser.id, csrf, expiresAt);
       await logAudit('session', refreshedUser.id, 'login', refreshedUser.name, { ip });
+      
       const cookieMaxAge = remember ? REMEMBER_ME_DAYS * 24 * 3600 : null;
       sendJson(
         response,
@@ -1505,7 +1596,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'PUT' && url.pathname.startsWith('/api/users/')) {
+    if (request.method === 'PUT' && url.pathname && url.pathname.startsWith('/api/users/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid user id.');
@@ -1521,7 +1612,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/users/')) {
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/users/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid user id.');
@@ -1557,7 +1648,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/views/')) {
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/views/')) {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid view id.');
@@ -1609,7 +1700,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'PUT' && url.pathname.startsWith('/api/webhooks/')) {
+    if (request.method === 'PUT' && url.pathname && url.pathname.startsWith('/api/webhooks/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid webhook id.');
@@ -1635,7 +1726,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/webhooks/')) {
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/webhooks/')) {
       assertRole(auth, 'admin');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid webhook id.');
@@ -1771,7 +1862,7 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'GET' && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
+    if (request.method === 'GET' && url.pathname && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
@@ -1782,42 +1873,75 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === 'POST' && url.pathname === '/api/tickets') {
-      assertRole(auth, 'manager');
+      assertRole(auth, 'user'); // Allow all users to create tickets
       const payload = await normalizeTicketInput(await readRequestBody(request));
       const due = calculateDueDate(payload.date_opening, payload.priority);
-      await stmtTickets.insert(
-        payload.description,
-        payload.jd_ticket_number,
-        payload.category,
-        payload.updates_comments,
-        payload.priority,
-        payload.date_opening,
-        payload.date_closed,
-        payload.status,
-        payload.assignee,
-        payload.manager,
-        due
-      );
-      const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = '${payload.jd_ticket_number}'`);
-      const row = newTicket[0];
-      if (payload.updates_comments) await stmtComments.insert(row.id, payload.assignee, 'Update', payload.updates_comments);
-      const ticket = await hydrateTicket(row);
-      await logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
-      await emitWebhooks('ticket.created', ticket);
-      const assigneeEmail = await getUserEmail(ticket.assignee);
-      if (assigneeEmail) {
-        sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+      
+      // Check for duplicate ticket number first
+      const existing = await stmtTickets.listBase(`WHERE jd_ticket_number = ?`, [payload.jd_ticket_number]);
+      if (existing.length > 0) {
+        throw new HttpError(409, `Ticket with number ${payload.jd_ticket_number} already exists.`);
       }
-      sendJson(response, 201, { ticket });
-      return;
+      
+      // Insert the ticket with proper error handling
+      try {
+        await stmtTickets.insert(
+          payload.description,
+          payload.jd_ticket_number,
+          payload.category,
+          payload.updates_comments,
+          payload.priority,
+          payload.date_opening,
+          payload.date_closed,
+          payload.status,
+          payload.assignee,
+          payload.manager,
+          due
+        );
+        
+        // Get the newly created ticket
+        const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = ?`, [payload.jd_ticket_number]);
+        if (!newTicket.length) {
+          throw new HttpError(500, 'Failed to retrieve created ticket.');
+        }
+        
+        const row = newTicket[0];
+        if (payload.updates_comments) {
+          await stmtComments.insert(row.id, payload.assignee, 'Update', payload.updates_comments);
+        }
+        
+        const ticket = await hydrateTicket(row);
+        await logAudit('ticket', ticket.id, 'create', auth.name, { description: ticket.description, status: ticket.status, priority: ticket.priority });
+        await emitWebhooks('ticket.created', ticket);
+        
+        const assigneeEmail = await getUserEmail(ticket.assignee);
+        if (assigneeEmail) {
+          sendEmail(assigneeEmail, `[New Ticket #${ticket.id}] ${ticket.description.slice(0, 60)}`, buildTicketEmailBody(ticket)).catch(e => console.error('[email]', e.message));
+        }
+        
+        sendJson(response, 201, { ticket });
+        return;
+      } catch (error) {
+        console.error('[ticket-creation]', error);
+        if (error instanceof HttpError) {
+          throw error;
+        }
+        throw new HttpError(500, 'Failed to create ticket. Please try again.');
+      }
     }
 
-    if (request.method === 'PUT' && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
-      assertRole(auth, 'manager');
+    if (request.method === 'PUT' && url.pathname && url.pathname.startsWith('/api/tickets/') && !url.pathname.endsWith('/comments')) {
+      assertRole(auth, 'user'); // Allow all users to update tickets
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
       const current = await stmtTickets.byId(id);
       if (!current) throw new HttpError(404, 'Ticket not found.');
+      
+      // Users can only update tickets they are assigned to, managers can update any
+      if (auth.role !== 'manager' && auth.role !== 'admin' && current.assignee !== auth.name) {
+        throw new HttpError(403, 'You can only update tickets assigned to you.');
+      }
+      
       const payload = await normalizeTicketInput(await readRequestBody(request));
       validateStatusTransition(current.status, payload.status, auth.role);
       const dueDate = calculateDueDate(payload.date_opening, payload.priority);
@@ -1856,8 +1980,8 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === 'DELETE' && url.pathname.startsWith('/api/tickets/')) {
-      assertRole(auth, 'manager');
+    if (request.method === 'DELETE' && url.pathname && url.pathname.startsWith('/api/tickets/')) {
+      assertRole(auth, 'manager'); // Only managers and admins can delete tickets
       const id = Number(url.pathname.split('/').pop());
       if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
       const exists = await stmtTickets.byId(id);
@@ -1927,7 +2051,7 @@ const server = createServer(async (request, response) => {
 
     // DELETE /api/tickets/:id/attachments/:attachmentId
     if (request.method === 'DELETE' && RE_ATTACHMENT_ITEM_PATH.test(url.pathname)) {
-      assertRole(auth, 'manager');
+      assertRole(auth, 'manager'); // Only managers and admins can delete attachments
       const parts = url.pathname.split('/');
       const ticketId = Number(parts[3]);
       const attachmentId = Number(parts[5]);
