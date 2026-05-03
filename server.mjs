@@ -88,18 +88,36 @@ const RATE_LIMITS = {
   read: { windowMs: 60_000, max: 600 }
 };
 
-mkdirSync(DATA_DIR, { recursive: true });
-mkdirSync(BACKUP_DIR, { recursive: true });
-mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
+// Create data directories with error handling for Render
+try {
+  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(BACKUP_DIR, { recursive: true });
+  mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
+} catch (error) {
+  if (error.code === 'EACCES') {
+    console.warn('[warning] Cannot create data directories, using fallback');
+    // Use alternative directory for Render
+    process.env.DATA_DIR = './tmp_data';
+    const fallbackDataDir = './tmp_data';
+    const fallbackBackupDir = './tmp_data/backups';
+    mkdirSync(fallbackDataDir, { recursive: true });
+    mkdirSync(fallbackBackupDir, { recursive: true });
+    mkdirSync(join(fallbackDataDir, 'uploads'), { recursive: true });
+    console.log('[info] Using fallback data directory:', fallbackDataDir);
+  } else {
+    throw error;
+  }
+}
 await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
-// MySQL configuration
+// Database configuration (supports both MySQL and PostgreSQL)
 const DB_HOST = process.env.DB_HOST || 'sql.freedb.tech';
 const DB_PORT = Number(process.env.DB_PORT || 3306);
 const DB_NAME = process.env.DB_NAME || 'freedb_TicketTracker';
 const DB_USER = process.env.DB_USER || 'freedb_mohamad';
 const DB_PASS = process.env.DB_PASS || 'u2!h$fH$29QPQcY';
+const DB_TYPE = process.env.DB_TYPE || 'mysql'; // 'mysql' or 'postgres'
 
 // Create MySQL connection pool
 let pool;
