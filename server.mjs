@@ -1295,19 +1295,15 @@ async function getDashboardData() {
   `);
   const throughputWeekly = throughputRows.map(r => ({ label: r.label, value: Number(r.value) }));
 
-  // 15. recentActivity — keep existing sync query
-  const recentActivity = (() => {
-    try {
-      return db.prepare(`
-        SELECT tc.id, tc.created_at, tc.author, tc.comment_type, tc.body,
-               t.jd_ticket_number, t.description, t.status, t.priority, t.id AS ticket_id
-        FROM ticket_comments tc
-        JOIN tickets t ON t.id = tc.ticket_id
-        ORDER BY tc.created_at DESC
-        LIMIT 8
-      `).all();
-    } catch { return []; }
-  })();
+  // 15. recentActivity
+  const recentActivity = await query(`
+    SELECT tc.id, tc.created_at, tc.author, tc.comment_type, tc.body,
+           t.jd_ticket_number, t.description, t.status, t.priority, t.id AS ticket_id
+    FROM ticket_comments tc
+    JOIN tickets t ON t.id = tc.ticket_id
+    ORDER BY tc.created_at DESC
+    LIMIT 8
+  `);
 
   const result = {
     totals: {
@@ -1822,7 +1818,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'GET' && url.pathname === '/api/import-history') {
       assertRole(auth, 'manager');
-      const batches = await query('SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, rolled_back, rolled_back_at, created_at FROM import_batches ORDER BY id DESC LIMIT 100');
+      const batches = await query('SELECT id, batch_name, imported_by, file_name, row_count, created_count, error_count, created_at FROM import_batches ORDER BY id DESC LIMIT 100');
       sendJson(response, 200, { batches });
       return;
     }
