@@ -197,7 +197,7 @@ const userAccountsTable = DB_TYPE === 'postgres'
       failed_login_attempts INT NOT NULL DEFAULT 0,
       locked_until DATETIME,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      updated_at DATETIME DEFAULT NULL
     )`;
 
 await query(userAccountsTable);
@@ -235,7 +235,7 @@ const ticketsTable = DB_TYPE === 'postgres'
       due_date DATETIME,
       reopened_count INT NOT NULL DEFAULT 0,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      updated_at DATETIME DEFAULT NULL
     )`;
 
 await query(ticketsTable);
@@ -278,7 +278,7 @@ const sessionTokensTable = DB_TYPE === 'postgres'
       csrf_token VARCHAR(255) NOT NULL,
       expires_at DATETIME NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      last_seen_at DATETIME DEFAULT NULL,
       FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
     )`;
 
@@ -322,7 +322,7 @@ const savedFiltersTable = DB_TYPE === 'postgres'
       name VARCHAR(255) NOT NULL,
       filter_json TEXT NOT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT NULL,
       FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
     )`;
 
@@ -345,7 +345,7 @@ const webhookSubscriptionsTable = DB_TYPE === 'postgres'
       secret_encrypted TEXT,
       active TINYINT NOT NULL DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      updated_at DATETIME DEFAULT NULL
     )`;
 
 await query(webhookSubscriptionsTable);

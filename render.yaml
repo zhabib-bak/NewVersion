@@ -16,17 +16,17 @@ services:
       - key: SEED_FORCE_RESET
         value: "false"
       - key: DB_TYPE
-        value: postgres
+        value: mysql
       - key: DB_HOST
-        value: db.nxp2oxdmmfzssmlwqgqz.supabase.co
+        value: sql7.freesqldatabase.com
       - key: DB_PORT
-        value: "5432"
+        value: "3306"
       - key: DB_NAME
-        value: postgres
+        value: sql7825288
       - key: DB_USER
-        value: postgres
+        value: sql7825288
       - key: DB_PASS
-        value: SUPABASE_PASSWORD
+        value: qS3KmP6hR1
       - key: JWT_SECRET
         value: 2fd84125f36d0e74653be1fc65e0de0
     disk:
