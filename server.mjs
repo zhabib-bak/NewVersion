@@ -3,6 +3,7 @@ import { stat, copyFile, mkdir, readFile, writeFile, unlink } from 'node:fs/prom
 import { createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
 import { createConnection as mysqlCreateConnection } from 'mysql2/promise';
+import { Pool as pgPool } from 'pg';
 import { URL } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
@@ -119,19 +120,32 @@ const DB_USER = process.env.DB_USER || 'freedb_mohamad';
 const DB_PASS = process.env.DB_PASS || 'u2!h$fH$29QPQcY';
 const DB_TYPE = process.env.DB_TYPE || 'mysql'; // 'mysql' or 'postgres'
 
-// Create MySQL connection pool
+// Create database connection pool
 let pool;
 
 async function createPool() {
-  pool = mysqlCreateConnection({
-    host: DB_HOST,
-    port: DB_PORT,
-    user: DB_USER,
-    password: DB_PASS,
-    database: DB_NAME,
-    namedPlaceholders: true,
-    multipleStatements: true
-  });
+  if (DB_TYPE === 'postgres') {
+    pool = new pgPool({
+      host: DB_HOST,
+      port: DB_PORT,
+      user: DB_USER,
+      password: DB_PASS,
+      database: DB_NAME,
+      max: 10,
+      idleTimeoutMillis: 30000,
+      connectionTimeoutMillis: 2000,
+    });
+  } else {
+    pool = mysqlCreateConnection({
+      host: DB_HOST,
+      port: DB_PORT,
+      user: DB_USER,
+      password: DB_PASS,
+      database: DB_NAME,
+      namedPlaceholders: true,
+      multipleStatements: true
+    });
+  }
   await pool;
 }
 
@@ -145,187 +159,391 @@ async function getConnection() {
 async function query(sql, params = []) {
   const connection = await getConnection();
   try {
-    const [results] = await connection.execute(sql, params);
-    return results;
+    if (DB_TYPE === 'postgres') {
+      const result = await connection.query(sql, params);
+      return result.rows;
+    } else {
+      const [results] = await connection.execute(sql, params);
+      return results;
+    }
   } finally {
     // Connection is automatically returned to pool
   }
 }
 
-// Create MySQL tables individually
-await query(`CREATE TABLE IF NOT EXISTS user_accounts (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(255) NOT NULL UNIQUE,
-  role VARCHAR(50) NOT NULL,
-  active TINYINT NOT NULL DEFAULT 1,
-  auth_pin_hash VARCHAR(255),
-  auth_secret_hash VARCHAR(255),
-  password_reset_required TINYINT NOT NULL DEFAULT 1,
-  failed_login_attempts INT NOT NULL DEFAULT 0,
-  locked_until DATETIME,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)`);
+// Create database tables (supports both MySQL and PostgreSQL)
+const userAccountsTable = DB_TYPE === 'postgres' 
+  ? `CREATE TABLE IF NOT EXISTS user_accounts (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      role VARCHAR(50) NOT NULL,
+      active SMALLINT NOT NULL DEFAULT 1,
+      auth_pin_hash VARCHAR(255),
+      auth_secret_hash VARCHAR(255),
+      password_reset_required SMALLINT NOT NULL DEFAULT 1,
+      failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  : `CREATE TABLE IF NOT EXISTS user_accounts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL UNIQUE,
+      role VARCHAR(50) NOT NULL,
+      active TINYINT NOT NULL DEFAULT 1,
+      auth_pin_hash VARCHAR(255),
+      auth_secret_hash VARCHAR(255),
+      password_reset_required TINYINT NOT NULL DEFAULT 1,
+      failed_login_attempts INT NOT NULL DEFAULT 0,
+      locked_until DATETIME,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`;
 
-await query(`CREATE TABLE IF NOT EXISTS tickets (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  description TEXT NOT NULL,
-  jd_ticket_number VARCHAR(255) NOT NULL,
-  category VARCHAR(100) NOT NULL,
-  updates_comments TEXT,
-  priority VARCHAR(20) NOT NULL,
-  date_opening DATETIME NOT NULL,
-  date_closed DATETIME,
-  status VARCHAR(50) NOT NULL,
-  assignee VARCHAR(255),
-  manager VARCHAR(255),
-  due_date DATETIME,
-  reopened_count INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)`);
+await query(userAccountsTable);
 
-await query(`CREATE TABLE IF NOT EXISTS ticket_comments (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  ticket_id INT NOT NULL,
-  author VARCHAR(255) NOT NULL,
-  comment_type VARCHAR(50) NOT NULL DEFAULT 'Update',
-  body TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
-)`);
+const ticketsTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS tickets (
+      id SERIAL PRIMARY KEY,
+      description TEXT NOT NULL,
+      jd_ticket_number VARCHAR(255) NOT NULL,
+      category VARCHAR(100) NOT NULL,
+      updates_comments TEXT,
+      priority VARCHAR(20) NOT NULL,
+      date_opening TIMESTAMP NOT NULL,
+      date_closed TIMESTAMP,
+      status VARCHAR(50) NOT NULL,
+      assignee VARCHAR(255),
+      manager VARCHAR(255),
+      due_date TIMESTAMP,
+      reopened_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  : `CREATE TABLE IF NOT EXISTS tickets (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      description TEXT NOT NULL,
+      jd_ticket_number VARCHAR(255) NOT NULL,
+      category VARCHAR(100) NOT NULL,
+      updates_comments TEXT,
+      priority VARCHAR(20) NOT NULL,
+      date_opening DATETIME NOT NULL,
+      date_closed DATETIME,
+      status VARCHAR(50) NOT NULL,
+      assignee VARCHAR(255),
+      manager VARCHAR(255),
+      due_date DATETIME,
+      reopened_count INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`;
 
-await query(`CREATE TABLE IF NOT EXISTS session_tokens (
-  id VARCHAR(255) PRIMARY KEY,
-  user_id INT NOT NULL,
-  csrf_token VARCHAR(255) NOT NULL,
-  expires_at DATETIME NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
-)`);
+await query(ticketsTable);
 
-await query(`CREATE TABLE IF NOT EXISTS ticket_audit_log (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  entity_type VARCHAR(50) NOT NULL,
-  entity_id INT,
-  action VARCHAR(100) NOT NULL,
-  actor VARCHAR(255) NOT NULL,
-  details_json TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)`);
+const ticketCommentsTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS ticket_comments (
+      id SERIAL PRIMARY KEY,
+      ticket_id INTEGER NOT NULL,
+      author VARCHAR(255) NOT NULL,
+      comment_type VARCHAR(50) NOT NULL DEFAULT 'Update',
+      body TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+    )`
+  : `CREATE TABLE IF NOT EXISTS ticket_comments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ticket_id INT NOT NULL,
+      author VARCHAR(255) NOT NULL,
+      comment_type VARCHAR(50) NOT NULL DEFAULT 'Update',
+      body TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+    )`;
 
-await query(`CREATE TABLE IF NOT EXISTS saved_filters (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  user_id INT NOT NULL,
-  name VARCHAR(255) NOT NULL,
-  filter_json TEXT NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
-)`);
+await query(ticketCommentsTable);
 
-await query(`CREATE TABLE IF NOT EXISTS webhook_subscriptions (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  url TEXT NOT NULL,
-  secret_encrypted TEXT,
-  active TINYINT NOT NULL DEFAULT 1,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)`);
+const sessionTokensTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS session_tokens (
+      id VARCHAR(255) PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      csrf_token VARCHAR(255) NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
+    )`
+  : `CREATE TABLE IF NOT EXISTS session_tokens (
+      id VARCHAR(255) PRIMARY KEY,
+      user_id INT NOT NULL,
+      csrf_token VARCHAR(255) NOT NULL,
+      expires_at DATETIME NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      last_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
+    )`;
 
-await query(`CREATE TABLE IF NOT EXISTS webhook_deliveries (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  webhook_id INT NOT NULL,
-  event_name VARCHAR(100) NOT NULL,
-  response_status INT,
-  success TINYINT NOT NULL DEFAULT 0,
-  duration_ms INT,
-  request_id VARCHAR(255) NOT NULL,
-  error_message TEXT,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (webhook_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
-)`);
+await query(sessionTokensTable);
 
-await query(`CREATE TABLE IF NOT EXISTS import_batches (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  batch_name VARCHAR(255),
-  imported_by VARCHAR(255) NOT NULL,
-  file_name VARCHAR(255) NOT NULL,
-  row_count INT NOT NULL,
-  created_count INT NOT NULL DEFAULT 0,
-  error_count INT NOT NULL DEFAULT 0,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)`);
+const ticketAuditLogTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS ticket_audit_log (
+      id SERIAL PRIMARY KEY,
+      entity_type VARCHAR(50) NOT NULL,
+      entity_id INTEGER,
+      action VARCHAR(100) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      details_json TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  : `CREATE TABLE IF NOT EXISTS ticket_audit_log (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      entity_type VARCHAR(50) NOT NULL,
+      entity_id INT,
+      action VARCHAR(100) NOT NULL,
+      actor VARCHAR(255) NOT NULL,
+      details_json TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`;
 
-await query(`CREATE TABLE IF NOT EXISTS ticket_attachments (
-  id INT AUTO_INCREMENT PRIMARY KEY,
-  ticket_id INT NOT NULL,
-  filename VARCHAR(255) NOT NULL,
-  content_type VARCHAR(100) NOT NULL,
-  size_bytes INT NOT NULL,
-  storage_path VARCHAR(500) NOT NULL,
-  uploaded_by VARCHAR(255) NOT NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
-)`);
+await query(ticketAuditLogTable);
 
-// MySQL column additions (if needed)
+const savedFiltersTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS saved_filters (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      filter_json TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
+    )`
+  : `CREATE TABLE IF NOT EXISTS saved_filters (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      filter_json TEXT NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES user_accounts(id) ON DELETE CASCADE
+    )`;
+
+await query(savedFiltersTable);
+
+const webhookSubscriptionsTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+      id SERIAL PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      url TEXT NOT NULL,
+      secret_encrypted TEXT,
+      active SMALLINT NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  : `CREATE TABLE IF NOT EXISTS webhook_subscriptions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(255) NOT NULL,
+      url TEXT NOT NULL,
+      secret_encrypted TEXT,
+      active TINYINT NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )`;
+
+await query(webhookSubscriptionsTable);
+
+const webhookDeliveriesTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id SERIAL PRIMARY KEY,
+      webhook_id INTEGER NOT NULL,
+      event_name VARCHAR(100) NOT NULL,
+      response_status INTEGER,
+      success SMALLINT NOT NULL DEFAULT 0,
+      duration_ms INTEGER,
+      request_id VARCHAR(255) NOT NULL,
+      error_message TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (webhook_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
+    )`
+  : `CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      webhook_id INT NOT NULL,
+      event_name VARCHAR(100) NOT NULL,
+      response_status INT,
+      success TINYINT NOT NULL DEFAULT 0,
+      duration_ms INT,
+      request_id VARCHAR(255) NOT NULL,
+      error_message TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (webhook_id) REFERENCES webhook_subscriptions(id) ON DELETE CASCADE
+    )`;
+
+await query(webhookDeliveriesTable);
+
+const importBatchesTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS import_batches (
+      id SERIAL PRIMARY KEY,
+      batch_name VARCHAR(255),
+      imported_by VARCHAR(255) NOT NULL,
+      file_name VARCHAR(255) NOT NULL,
+      row_count INTEGER NOT NULL,
+      created_count INTEGER NOT NULL DEFAULT 0,
+      error_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  : `CREATE TABLE IF NOT EXISTS import_batches (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      batch_name VARCHAR(255),
+      imported_by VARCHAR(255) NOT NULL,
+      file_name VARCHAR(255) NOT NULL,
+      row_count INT NOT NULL,
+      created_count INT NOT NULL DEFAULT 0,
+      error_count INT NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`;
+
+await query(importBatchesTable);
+
+const ticketAttachmentsTable = DB_TYPE === 'postgres'
+  ? `CREATE TABLE IF NOT EXISTS ticket_attachments (
+      id SERIAL PRIMARY KEY,
+      ticket_id INTEGER NOT NULL,
+      filename VARCHAR(255) NOT NULL,
+      content_type VARCHAR(100) NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      storage_path VARCHAR(500) NOT NULL,
+      uploaded_by VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+    )`
+  : `CREATE TABLE IF NOT EXISTS ticket_attachments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      ticket_id INT NOT NULL,
+      filename VARCHAR(255) NOT NULL,
+      content_type VARCHAR(100) NOT NULL,
+      size_bytes INT NOT NULL,
+      storage_path VARCHAR(500) NOT NULL,
+      uploaded_by VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE
+    )`;
+
+await query(ticketAttachmentsTable);
+
+// Database column additions (if needed)
 async function ensureColumn(table, column, definition) {
   try {
-    await query(`ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`);
+    const alterSQL = DB_TYPE === 'postgres' 
+      ? `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`
+      : `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS ${column} ${definition}`;
+    await query(alterSQL);
   } catch (error) {
     // Column might already exist, ignore error
   }
 }
 
-await ensureColumn('tickets', 'due_date', 'DATETIME');
-await ensureColumn('tickets', 'reopened_count', 'INT NOT NULL DEFAULT 0');
+await ensureColumn('tickets', 'due_date', DB_TYPE === 'postgres' ? 'TIMESTAMP' : 'DATETIME');
+await ensureColumn('tickets', 'reopened_count', DB_TYPE === 'postgres' ? 'INTEGER NOT NULL DEFAULT 0' : 'INT NOT NULL DEFAULT 0');
 await ensureColumn('user_accounts', 'auth_pin_hash', 'VARCHAR(255)');
 await ensureColumn('user_accounts', 'auth_secret_hash', 'VARCHAR(255)');
-await ensureColumn('user_accounts', 'password_reset_required', 'TINYINT NOT NULL DEFAULT 1');
-await ensureColumn('user_accounts', 'failed_login_attempts', 'INT NOT NULL DEFAULT 0');
-await ensureColumn('user_accounts', 'locked_until', 'DATETIME');
+await ensureColumn('user_accounts', 'password_reset_required', DB_TYPE === 'postgres' ? 'SMALLINT NOT NULL DEFAULT 1' : 'TINYINT NOT NULL DEFAULT 1');
+await ensureColumn('user_accounts', 'failed_login_attempts', DB_TYPE === 'postgres' ? 'INTEGER NOT NULL DEFAULT 0' : 'INT NOT NULL DEFAULT 0');
+await ensureColumn('user_accounts', 'locked_until', DB_TYPE === 'postgres' ? 'TIMESTAMP' : 'DATETIME');
 await ensureColumn('user_accounts', 'email', 'VARCHAR(255)');
 await ensureColumn('ticket_comments', 'comment_type', "VARCHAR(50) NOT NULL DEFAULT 'Update'");
 await ensureColumn('webhook_subscriptions', 'secret_encrypted', 'TEXT');
-await ensureColumn('tickets', 'batch_id', 'INT');
+await ensureColumn('tickets', 'batch_id', DB_TYPE === 'postgres' ? 'INTEGER' : 'INT');
 
 // Check for legacy secret column migration
-const secretColumnInfo = await query('SHOW COLUMNS FROM webhook_subscriptions');
-const hasLegacySecret = secretColumnInfo.some((column) => column.Field === 'secret');
+let secretColumnInfo;
+if (DB_TYPE === 'postgres') {
+  secretColumnInfo = await query(`
+    SELECT column_name 
+    FROM information_schema.columns 
+    WHERE table_name = 'webhook_subscriptions'
+  `);
+} else {
+  secretColumnInfo = await query('SHOW COLUMNS FROM webhook_subscriptions');
+}
+const hasLegacySecret = secretColumnInfo.some((column) => column.Field === 'secret' || column.column_name === 'secret');
 if (hasLegacySecret) {
   const legacyHooks = await query("SELECT id, secret FROM webhook_subscriptions WHERE secret IS NOT NULL AND TRIM(secret) <> '' AND (secret_encrypted IS NULL OR TRIM(secret_encrypted) = '')");
   for (const hook of legacyHooks) {
-    await query('UPDATE webhook_subscriptions SET secret_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [encryptSecret(hook.secret), hook.id]);
+    await query(DB_TYPE === 'postgres' 
+    ? 'UPDATE webhook_subscriptions SET secret_encrypted = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2'
+    : 'UPDATE webhook_subscriptions SET secret_encrypted = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+  [encryptSecret(hook.secret), hook.id]);
   }
 }
 
-// MySQL query functions
+// Database query functions
 const stmtUsers = {
   list: async () => await query(`
     SELECT id, name, role, active, password_reset_required, failed_login_attempts, locked_until, created_at, updated_at
     FROM user_accounts
     ORDER BY CASE role WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 ELSE 3 END, name ASC
   `),
-  byName: async (name) => (await query('SELECT * FROM user_accounts WHERE LOWER(name) = LOWER(?)', [name]))[0],
-  byId: async (id) => (await query('SELECT * FROM user_accounts WHERE id = ?', [id]))[0],
-  insert: async (name, role, active, auth_secret_hash, password_reset_required, email) => 
-    await query('INSERT IGNORE INTO user_accounts (name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)', [name, role, active, auth_secret_hash, password_reset_required, email]),
-  update: async (name, role, active, auth_secret_hash, password_reset_required, email, id) =>
-    await query('UPDATE user_accounts SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [name, role, active, auth_secret_hash, password_reset_required, email, id]),
-  setSecret: async (auth_secret_hash, password_reset_required, id) =>
-    await query('UPDATE user_accounts SET auth_secret_hash = ?, auth_pin_hash = NULL, password_reset_required = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [auth_secret_hash, password_reset_required, id]),
-  loginFail: async (failed_login_attempts, locked_until, id) =>
-    await query('UPDATE user_accounts SET failed_login_attempts = ?, locked_until = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [failed_login_attempts, locked_until, id]),
-  resetLoginFailures: async (id) =>
-    await query('UPDATE user_accounts SET failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [id]),
-  delete: async (id) => await query('DELETE FROM user_accounts WHERE id = ?', [id])
+  byName: async (name) => {
+    const result = await query(DB_TYPE === 'postgres' 
+      ? 'SELECT * FROM user_accounts WHERE LOWER(name) = LOWER($1)' 
+      : 'SELECT * FROM user_accounts WHERE LOWER(name) = LOWER(?)', 
+      [name]);
+    return result[0];
+  },
+  byId: async (id) => {
+    const result = await query(DB_TYPE === 'postgres' 
+      ? 'SELECT * FROM user_accounts WHERE id = $1' 
+      : 'SELECT * FROM user_accounts WHERE id = ?', 
+      [id]);
+    return result[0];
+  },
+  insert: async (name, role, active, auth_secret_hash, password_reset_required, email) => {
+    if (DB_TYPE === 'postgres') {
+      await query('INSERT INTO user_accounts (name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at) VALUES ($1, $2, $3, $4, $5, 0, NULL, $6, CURRENT_TIMESTAMP) ON CONFLICT (name) DO NOTHING', 
+        [name, role, active, auth_secret_hash, password_reset_required, email]);
+    } else {
+      await query('INSERT IGNORE INTO user_accounts (name, role, active, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, updated_at) VALUES (?, ?, ?, ?, ?, 0, NULL, ?, CURRENT_TIMESTAMP)', 
+        [name, role, active, auth_secret_hash, password_reset_required, email]);
+    }
+  },
+  update: async (name, role, active, auth_secret_hash, password_reset_required, email, id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'UPDATE user_accounts SET name = $1, role = $2, active = $3, auth_secret_hash = COALESCE($4, auth_secret_hash), password_reset_required = $5, email = $6, updated_at = CURRENT_TIMESTAMP WHERE id = $7'
+      : 'UPDATE user_accounts SET name = ?, role = ?, active = ?, auth_secret_hash = COALESCE(?, auth_secret_hash), password_reset_required = ?, email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+      [name, role, active, auth_secret_hash, password_reset_required, email, id]);
+  },
+  setSecret: async (auth_secret_hash, password_reset_required, id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'UPDATE user_accounts SET auth_secret_hash = $1, auth_pin_hash = NULL, password_reset_required = $2, failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $3'
+      : 'UPDATE user_accounts SET auth_secret_hash = ?, auth_pin_hash = NULL, password_reset_required = ?, failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+      [auth_secret_hash, password_reset_required, id]);
+  },
+  loginFail: async (failed_login_attempts, locked_until, id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'UPDATE user_accounts SET failed_login_attempts = $1, locked_until = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3'
+      : 'UPDATE user_accounts SET failed_login_attempts = ?, locked_until = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+      [failed_login_attempts, locked_until, id]);
+  },
+  resetLoginFailures: async (id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'UPDATE user_accounts SET failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = $1'
+      : 'UPDATE user_accounts SET failed_login_attempts = 0, locked_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+      [id]);
+  },
+  delete: async (id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'DELETE FROM user_accounts WHERE id = $1'
+      : 'DELETE FROM user_accounts WHERE id = ?', 
+      [id]);
+  }
 };
 
 const stmtTickets = {
-  byId: async (id) => (await query('SELECT * FROM tickets WHERE id = ?', [id]))[0],
+  byId: async (id) => {
+    const result = await query(DB_TYPE === 'postgres' 
+      ? 'SELECT * FROM tickets WHERE id = $1' 
+      : 'SELECT * FROM tickets WHERE id = ?', 
+      [id]);
+    return result[0];
+  },
   listBase: async (where) => await query(`
     SELECT * FROM tickets
     ${where}
@@ -334,44 +552,95 @@ const stmtTickets = {
       date_opening DESC,
       id DESC
   `),
-  insert: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date) =>
-    await query('INSERT INTO tickets (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)', [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date]),
-  update: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id) =>
-    await query('UPDATE tickets SET description = ?, jd_ticket_number = ?, category = ?, updates_comments = ?, priority = ?, date_opening = ?, date_closed = ?, status = ?, assignee = ?, manager = ?, due_date = ?, reopened_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id]),
-  delete: async (id) => await query('DELETE FROM tickets WHERE id = ?', [id])
+  insert: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'INSERT INTO tickets (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, updated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, CURRENT_TIMESTAMP)'
+      : 'INSERT INTO tickets (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)', 
+      [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date]);
+  },
+  update: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'UPDATE tickets SET description = $1, jd_ticket_number = $2, category = $3, updates_comments = $4, priority = $5, date_opening = $6, date_closed = $7, status = $8, assignee = $9, manager = $10, due_date = $11, reopened_count = $12, updated_at = CURRENT_TIMESTAMP WHERE id = $13'
+      : 'UPDATE tickets SET description = ?, jd_ticket_number = ?, category = ?, updates_comments = ?, priority = ?, date_opening = ?, date_closed = ?, status = ?, assignee = ?, manager = ?, due_date = ?, reopened_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', 
+      [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id]);
+  },
+  delete: async (id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'DELETE FROM tickets WHERE id = $1'
+      : 'DELETE FROM tickets WHERE id = ?', 
+      [id]);
+  }
 };
 
 const stmtComments = {
   listByTicket: async (ticket_id) => await query(`
     SELECT id, ticket_id, author, comment_type, body, created_at
     FROM ticket_comments
-    WHERE ticket_id = ?
+    WHERE ticket_id = ${DB_TYPE === 'postgres' ? '$1' : '?'}
     ORDER BY created_at ASC, id ASC
   `, [ticket_id]),
-  insert: async (ticket_id, author, comment_type, body) =>
-    await query('INSERT INTO ticket_comments (ticket_id, author, comment_type, body, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', [ticket_id, author, comment_type, body])
+  insert: async (ticket_id, author, comment_type, body) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'INSERT INTO ticket_comments (ticket_id, author, comment_type, body, created_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)'
+      : 'INSERT INTO ticket_comments (ticket_id, author, comment_type, body, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', 
+      [ticket_id, author, comment_type, body]);
+  }
 };
 
 const stmtSessions = {
-  byId: async (id) => (await query(`
+  byId: async (id) => {
+    const result = await query(`
     SELECT s.id, s.user_id, s.csrf_token, s.expires_at, u.name, u.role, u.active, u.password_reset_required
     FROM session_tokens s
     JOIN user_accounts u ON u.id = s.user_id
-    WHERE s.id = ?
-  `, [id]))[0],
-  insert: async (id, user_id, csrf_token, expires_at) =>
-    await query('INSERT INTO session_tokens (id, user_id, csrf_token, expires_at, last_seen_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', [id, user_id, csrf_token, expires_at]),
-  touch: async (id) => await query('UPDATE session_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?', [id]),
-  delete: async (id) => await query('DELETE FROM session_tokens WHERE id = ?', [id]),
-  deleteByUser: async (user_id) => await query('DELETE FROM session_tokens WHERE user_id = ?', [user_id]),
+    WHERE s.id = ${DB_TYPE === 'postgres' ? '$1' : '?'}
+  `, [id]);
+    return result[0];
+  },
+  insert: async (id, user_id, csrf_token, expires_at) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'INSERT INTO session_tokens (id, user_id, csrf_token, expires_at, last_seen_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)'
+      : 'INSERT INTO session_tokens (id, user_id, csrf_token, expires_at, last_seen_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)', 
+      [id, user_id, csrf_token, expires_at]);
+  },
+  touch: async (id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'UPDATE session_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE id = $1'
+      : 'UPDATE session_tokens SET last_seen_at = CURRENT_TIMESTAMP WHERE id = ?', 
+      [id]);
+  },
+  delete: async (id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'DELETE FROM session_tokens WHERE id = $1'
+      : 'DELETE FROM session_tokens WHERE id = ?', 
+      [id]);
+  },
+  deleteByUser: async (user_id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'DELETE FROM session_tokens WHERE user_id = $1'
+      : 'DELETE FROM session_tokens WHERE user_id = ?', 
+      [user_id]);
+  },
   purge: async () => await query('DELETE FROM session_tokens WHERE expires_at < CURRENT_TIMESTAMP')
 };
 
 const stmtFilters = {
-  listByUser: async (user_id) => await query('SELECT id, name, filter_json, created_at, updated_at FROM saved_filters WHERE user_id = ? ORDER BY updated_at DESC', [user_id]),
-  insert: async (user_id, name, filter_json) =>
-    await query('INSERT INTO saved_filters (user_id, name, filter_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)', [user_id, name, filter_json]),
-  delete: async (id, user_id) => await query('DELETE FROM saved_filters WHERE id = ? AND user_id = ?', [id, user_id])
+  listByUser: async (user_id) => await query(DB_TYPE === 'postgres' 
+    ? 'SELECT id, name, filter_json, created_at, updated_at FROM saved_filters WHERE user_id = $1 ORDER BY updated_at DESC'
+    : 'SELECT id, name, filter_json, created_at, updated_at FROM saved_filters WHERE user_id = ? ORDER BY updated_at DESC', 
+    [user_id]),
+  insert: async (user_id, name, filter_json) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'INSERT INTO saved_filters (user_id, name, filter_json, updated_at) VALUES ($1, $2, $3, CURRENT_TIMESTAMP)'
+      : 'INSERT INTO saved_filters (user_id, name, filter_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)', 
+      [user_id, name, filter_json]);
+  },
+  delete: async (id, user_id) => {
+    await query(DB_TYPE === 'postgres' 
+      ? 'DELETE FROM saved_filters WHERE id = $1 AND user_id = $2'
+      : 'DELETE FROM saved_filters WHERE id = ? AND user_id = ?', 
+      [id, user_id]);
+  }
 };
 
 const stmtWebhooks = {
@@ -472,14 +741,28 @@ async function ensurePerformanceIndexes() {
 }
 
 async function bootstrapDataStore() {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
+  const currentDataDir = process.env.DATA_DIR || DATA_DIR;
+  if (!existsSync(currentDataDir)) {
+    try {
+      mkdirSync(currentDataDir, { recursive: true });
+    } catch (error) {
+      if (error.code === 'EACCES') {
+        console.warn('[warning] Cannot create bootstrap data directory, using fallback');
+        const fallbackDir = './tmp_data';
+        if (!existsSync(fallbackDir)) {
+          mkdirSync(fallbackDir, { recursive: true });
+        }
+      } else {
+        throw error;
+      }
+    }
   }
   console.log('[bootstrap] MySQL database initialized');
 }
 
 async function loadOrCreateEncryptionKey() {
-  const keyPath = join(DATA_DIR, '.app-secrets.json');
+  const currentDataDir = process.env.DATA_DIR || DATA_DIR;
+  const keyPath = join(currentDataDir, '.app-secrets.json');
   try {
     const raw = await readFile(keyPath, 'utf8');
     const parsed = JSON.parse(raw);

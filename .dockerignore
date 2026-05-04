@@ -6,3 +6,12 @@ node_modules/
 *.db-wal
 .claude/
 .git/
+mix.exs
+*.exs
+*.beam
+*.eex
+*.leex
+*.heex
+_deps/
+_build/
+mix.lock

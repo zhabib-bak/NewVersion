@@ -1,24 +1,24 @@
-# 🚀 Ticket Tracker Enterprise
+# Control Room — Ticket Tracker
 
-**Enterprise-grade operational ticket tracker** built with **Node.js 22** and premium dark theme. Single-process, single-file server backed by MySQL with a sophisticated SPA frontend featuring glass-morphism design and advanced visualizations.
+A self-hosted operational ticket tracker built with **Node.js 22**. Single-process, single-file server backed by MySQL. Ships with a full-featured SPA frontend.
 
-## ✨ Premium Features
+## Features
 
-| Area | Enterprise Features |
+| Area | What's included |
 |---|---|
-| **🎨 Premium UI** | Glass-morphism dark theme · Advanced animations · Micro-interactions · Enterprise-grade design |
-| **🔐 Security** | Password login · scrypt hashing · No account lockout · Forced password reset · HttpOnly+SameSite cookies · CSRF tokens |
-| **👥 RBAC** | Three roles: `user` < `manager` < `admin` — Universal access to core features · Admin-only roles management |
-| **🎫 Tickets** | Create · edit · status workflow · priority · SLA tracking · aging · due dates · Advanced search |
-| **📊 Dashboards** | ApexCharts interactive visualizations · Professional analytics · Real-time data · Premium charts |
-| **🔍 Search** | Advanced multi-criteria search · Full-text search · Filter combinations · Saved views |
-| **📥 Bulk Import** | 4-step CSV wizard · Column mapping · Preview · Results · Auto-detect 50+ headers |
-| **📎 Attachments** | File uploads (JPEG, PNG, PDF, CSV, TXT — 8MB max) · Download · Delete |
-| **📧 Email** | SMTP notifications · STARTTLS · Direct TLS · Configurable |
-| **🎯 Kanban** | Drag-and-drop board · Live status columns · Visual workflow |
-| **🌐 Webhooks** | HMAC-SHA256 signing · HTTPS-only · SSRF protection · Delivery history |
-| **📋 Audit Trail** | Immutable security and data change logging |
-| **🚀 Performance** | Connection pooling · Optimized queries · Caching ready · Enterprise scaling |
+| **Auth** | Password login · scrypt hashing · brute-force lockout · forced password reset · HttpOnly+SameSite cookies · CSRF tokens |
+| **RBAC** | Three roles: `user` < `manager` < `admin` — enforced on every endpoint |
+| **Tickets** | Create · edit · status workflow · priority · SLA tracking · aging · due dates |
+| **Bulk import** | 4-step CSV wizard (upload → column mapping → preview → results) · auto-detects 50+ header aliases · partial success · per-row errors · rollback |
+| **Pagination** | Server-side 50 rows/page with Prev/Next controls |
+| **Attachments** | Per-ticket file uploads (JPEG, PNG, PDF, CSV, TXT — max 8 MB) · download · delete |
+| **Email** | SMTP notifications on ticket assignment and status change · STARTTLS + direct TLS · opt-in via env vars |
+| **Kanban** | Drag-and-drop board with live status columns |
+| **Dashboards** | Summary cards · trend charts · priority/assignee/category breakdowns |
+| **Saved views** | Persist filter combinations as named chips |
+| **Webhooks** | Outgoing webhooks with HMAC-SHA256 signing · HTTPS-only · SSRF protection · delivery history |
+| **Audit trail** | Immutable log of every security and data change |
+| **CI** | GitHub Actions: syntax check + 6-check smoke test on every push |
 
 ## Requirements
 

@@ -8,13 +8,27 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATA_DIR
-        value: /app/data
+        value: /tmp/data
       - key: SESSION_DURATION_HOURS
         value: "12"
       - key: TICKET_APP_DEFAULT_PASSWORD
-        generateValue: true
+        value: Qwer1234..
       - key: SEED_FORCE_RESET
         value: "false"
+      - key: DB_TYPE
+        value: postgres
+      - key: DB_HOST
+        value: db.nxp2oxdmmfzssmlwqgqz.supabase.co
+      - key: DB_PORT
+        value: "5432"
+      - key: DB_NAME
+        value: postgres
+      - key: DB_USER
+        value: postgres
+      - key: DB_PASS
+        value: SUPABASE_PASSWORD
+      - key: JWT_SECRET
+        value: 2fd84125f36d0e74653be1fc65e0de0
     disk:
       name: data
       mountPath: /app/data

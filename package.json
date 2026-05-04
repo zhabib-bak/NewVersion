@@ -1,7 +1,7 @@
 {
-  "name": "ticket-tracker-enterprise",
-  "version": "2.1.0",
-  "description": "Enterprise-grade operational ticket tracker with premium dark theme — Node 22, MySQL backend",
+  "name": "ticket-control-board",
+  "version": "2.0.0",
+  "description": "Self-hosted operational ticket tracker — Node 22, MySQL backend",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,35 +9,11 @@
   },
   "scripts": {
     "start": "node server.mjs",
-    "dev": "node --watch server.mjs",
     "test": "node scripts/smoke-test.mjs",
-    "smoke": "node scripts/smoke-test.mjs",
-    "audit": "node pre-deploy-audit.mjs",
-    "optimize": "node code-optimization-analysis.mjs",
-    "test-suite": "node functionality-test-suite.mjs"
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
-    "mysql2": "^3.6.0",
-    "express": "^4.18.2",
-    "bcrypt": "^5.1.1",
-    "uuid": "^9.0.1",
-    "cors": "^2.8.5",
-    "helmet": "^7.1.0",
-    "compression": "^1.7.4",
-    "morgan": "^1.10.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
-  },
-  "keywords": [
-    "ticket-tracker",
-    "enterprise",
-    "dark-theme",
-    "mysql",
-    "nodejs",
-    "operational",
-    "management"
-  ],
-  "author": "Enterprise Development Team",
-  "license": "MIT"
+    "mysql2": "^3.22.3",
+    "pg": "^8.11.3"
+  }
 }
