@@ -132,10 +132,13 @@ async function createPool() {
       password: DB_PASS,
       database: DB_NAME,
       max: 10,
-      // Force IPv4 connection to avoid IPv6 issues
+      // Force IPv4 connection and SSL for Supabase
       family: 4,
+      ssl: {
+        rejectUnauthorized: false
+      },
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      connectionTimeoutMillis: 10000,
     });
   } else {
     pool = mysqlCreateConnection({
