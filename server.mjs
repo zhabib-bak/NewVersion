@@ -132,6 +132,8 @@ async function createPool() {
       password: DB_PASS,
       database: DB_NAME,
       max: 10,
+      // Force IPv4 connection to avoid IPv6 issues
+      family: 4,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 2000,
     });
