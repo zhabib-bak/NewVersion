@@ -762,7 +762,7 @@ async function bootstrapDataStore() {
       }
     }
   }
-  console.log('[bootstrap] MySQL database initialized');
+  console.log(`[bootstrap] ${DB_TYPE.toUpperCase()} database initialized`);
 }
 
 async function loadOrCreateEncryptionKey() {
