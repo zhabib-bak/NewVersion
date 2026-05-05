@@ -9,12 +9,25 @@ DELETE FROM saved_filters;
 DELETE FROM tickets;
 DELETE FROM user_accounts;
 
--- Reset sequences
-ALTER SEQUENCE user_accounts_id_seq RESTART WITH 1;
-ALTER SEQUENCE tickets_id_seq RESTART WITH 1;
-ALTER SEQUENCE ticket_comments_id_seq RESTART WITH 1;
-ALTER SEQUENCE ticket_audit_log_id_seq RESTART WITH 1;
-ALTER SEQUENCE saved_filters_id_seq RESTART WITH 1;
+-- Reset sequences (only if they exist)
+DO $$ 
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'user_accounts_id_seq') THEN
+        ALTER SEQUENCE user_accounts_id_seq RESTART WITH 1;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'tickets_id_seq') THEN
+        ALTER SEQUENCE tickets_id_seq RESTART WITH 1;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ticket_comments_id_seq') THEN
+        ALTER SEQUENCE ticket_comments_id_seq RESTART WITH 1;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'ticket_audit_log_id_seq') THEN
+        ALTER SEQUENCE ticket_audit_log_id_seq RESTART WITH 1;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_class WHERE relname = 'saved_filters_id_seq') THEN
+        ALTER SEQUENCE saved_filters_id_seq RESTART WITH 1;
+    END IF;
+END $$;
 
 -- Insert user accounts
 INSERT INTO user_accounts (name, role, active, auth_pin_hash, auth_secret_hash, password_reset_required, failed_login_attempts, locked_until, email, created_at, updated_at) VALUES
@@ -33,16 +46,13 @@ INSERT INTO user_accounts (name, role, active, auth_pin_hash, auth_secret_hash, 
 ('Zacarias', 'admin', 1, NULL, 'scrypt:d2311ae2fd4e767bb2c528eaeb270d34:7c409a2a8634ff0a56b68edb191b1e429a43082a13ddcf5cd5e415128130868e5df7ab176cdc3dd20e585c578751946d9e21063b7f1c1f689aee01e8e830f5ae', 1, 0, NULL, '', '2026-05-01 08:57:05', '2026-05-03 00:55:47'),
 ('Jawad', 'admin', 1, NULL, 'scrypt:b6c93ad2438a60512e9eafc4d5e5f4f9:f02ddff82ca6442b950d95233fe52490cccef0662c396bc767e23c1bdb9ebfbbc80fbfe76a567037431628e9dd469bbd4ab75d94e5e4108af6b845c6865c9f36', 1, 0, NULL, '', '2026-05-01 08:57:05', '2026-05-03 01:25:30');
 
--- Insert tickets
+-- Insert tickets (excluding test tickets with non-numeric jd_ticket_number)
 INSERT INTO tickets (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, created_at, updated_at) VALUES
 ('WMS label printer issue in outbound lane', '6914450', 'WMS', 'Investigating printer queue and spooler resets.', 'P1 high', '2026-05-01', NULL, 'Open', 'Samuel', 'Zacarias', '2026-05-02', 0, '2026-05-01 08:57:06', '2026-05-01 08:57:06'),
 ('Inbound ASN mismatch for supplier load', '6914451', 'Inbound', 'Validated supplier file. Waiting for warehouse confirmation.', 'P2 medium', '2026-04-29', NULL, 'In Progress', 'Ana', 'Adriano', '2026-05-02', 0, '2026-05-01 08:57:06', '2026-05-01 08:57:06'),
 ('CR to update shuttle routing thresholds', '6914452', 'CR', 'Change request approved by operations.', 'P2 medium', '2026-04-26', '2026-04-30', 'Closed', 'Loan', 'Jawad', '2026-04-29', 0, '2026-05-01 08:57:06', '2026-05-01 08:57:06'),
 ('Inventory discrepancy in zone C12', '6914453', 'Inventory', 'Cycle count requested. Potential location swap.', 'P3 low', '2026-04-27', NULL, 'Blocked', 'Oliwia', 'Adriano', '2026-05-04', 0, '2026-05-01 08:57:06', '2026-05-01 08:57:06'),
-('Scada alarm flooding operators', '6914454', 'Scada', 'Reviewed logs and escalated to controls vendor.', 'P1 high', '2026-04-24', NULL, 'In Progress', 'Mohamad', 'Jawad', '2026-04-25', 0, '2026-05-01 08:57:06', '2026-05-01 08:57:06'),
-('Test ticket for debugging', 'TEST-1777771422757', 'Technical', 'Test comment', 'P2 medium', '2026-05-03 01:23:42', NULL, 'Open', 'zacarias', 'zacarias', '2026-05-10 01:23:42', 0, '2026-05-03 01:23:42', '2026-05-03 01:23:42'),
-('Test ticket from API simulation', 'API-SIM-1777771555611', 'Technical', 'Test comment from API simulation', 'P2 medium', '2026-05-03 01:25:55', NULL, 'Open', 'zacarias', 'zacarias', '2026-05-10 01:25:55', 0, '2026-05-03 01:25:55', '2026-05-03 01:25:55'),
-('Fixed test ticket', 'FIXED-1777771579808', 'Technical', 'Test comment for fix', 'P2 medium', '2026-05-03 01:26:19', NULL, 'Open', 'zacarias', 'zacarias', '2026-05-10 01:26:19', 0, '2026-05-03 01:26:19', '2026-05-03 01:26:19');
+('Scada alarm flooding operators', '6914454', 'Scada', 'Reviewed logs and escalated to controls vendor.', 'P1 high', '2026-04-24', NULL, 'In Progress', 'Mohamad', 'Jawad', '2026-04-25', 0, '2026-05-01 08:57:06', '2026-05-01 08:57:06');
 
 -- Insert ticket comments
 INSERT INTO ticket_comments (ticket_id, author, comment_type, body, created_at) VALUES
