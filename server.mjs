@@ -113,12 +113,12 @@ await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
 // Database configuration (supports both MySQL and PostgreSQL)
-const DB_HOST = process.env.DB_HOST || 'sql.freedb.tech';
-const DB_PORT = Number(process.env.DB_PORT || 3306);
-const DB_NAME = process.env.DB_NAME || 'freedb_TicketTracker';
-const DB_USER = process.env.DB_USER || 'freedb_mohamad';
-const DB_PASS = process.env.DB_PASS || 'u2!h$fH$29QPQcY';
-const DB_TYPE = process.env.DB_TYPE || 'mysql'; // 'mysql' or 'postgres'
+const DB_HOST = process.env.DB_HOST || 'db.qjocqliwkzflrgcrwxwt.supabase.co';
+const DB_PORT = Number(process.env.DB_PORT || 5432);
+const DB_NAME = process.env.DB_NAME || 'postgres';
+const DB_USER = process.env.DB_USER || 'postgres';
+const DB_PASS = process.env.DB_PASS || 'tweakDenseicky%0';
+const DB_TYPE = process.env.DB_TYPE || 'postgres'; // 'mysql' or 'postgres'
 
 // Create database connection pool
 let pool;
