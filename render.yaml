@@ -3,6 +3,7 @@ services:
     name: ticket-tracker
     runtime: node
     healthCheckPath: /api/health
+    startCommand: node server.mjs
     envVars:
       - key: NODE_ENV
         value: production
