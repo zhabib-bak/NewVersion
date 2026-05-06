@@ -113,12 +113,12 @@ await bootstrapDataStore();
 const ENCRYPTION_KEY = await loadOrCreateEncryptionKey();
 
 // Database configuration (supports both MySQL and PostgreSQL)
-const DB_HOST = process.env.DB_HOST || '34.159.196.244'; // Direct IPv4 IP for Supabase
-const DB_PORT = Number(process.env.DB_PORT || 5432);
-const DB_NAME = process.env.DB_NAME || 'postgres';
-const DB_USER = process.env.DB_USER || 'postgres';
-const DB_PASS = process.env.DB_PASS || 'tweakDenseicky%0';
-const DB_TYPE = process.env.DB_TYPE || 'postgres'; // 'mysql' or 'postgres'
+const DB_HOST = process.env.DB_HOST;
+const DB_PORT = Number(process.env.DB_PORT);
+const DB_NAME = process.env.DB_NAME;
+const DB_USER = process.env.DB_USER;
+const DB_PASS = process.env.DB_PASS;
+const DB_TYPE = process.env.DB_TYPE; // 'mysql' or 'postgres'
 
 // Create database connection pool
 let pool;
