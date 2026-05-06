@@ -1,8 +1,7 @@
 services:
   - type: web
     name: ticket-tracker
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    runtime: node
     healthCheckPath: /api/health
     envVars:
       - key: NODE_ENV
@@ -18,7 +17,7 @@ services:
       - key: DB_TYPE
         value: postgres
       - key: DB_HOST
-        value: db.qjocqliwkzflrgcrwxwt.supabase.co
+        value: 34.159.196.244
       - key: DB_PORT
         value: "5432"
       - key: DB_NAME
