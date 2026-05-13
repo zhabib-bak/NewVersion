@@ -1,558 +1,130 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Control Room | Ticket Tracker</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css" />
-  </head>
-  <body>
-    <div id="login-overlay" class="login-overlay">
-      <section class="login-card">
-        <p class="eyebrow">Secure Access</p>
-        <h2>Control Room Sign In</h2>
-        <p class="muted">Use your assigned account name and password.</p>
-        <form id="login-form" class="stack">
-          <label>
-            User name
-            <input id="login-name" required />
-          </label>
-          <label>
-            Password
-            <input id="login-password" required type="password" autocomplete="current-password" />
-          </label>
-          <label class="checkbox-row" style="margin-top:2px">
-            <input id="login-remember" type="checkbox" />
-            <span>Remember me for 30 days</span>
-          </label>
-          <button type="submit">Sign in</button>
-          <p class="muted">If your account is marked for reset, you will be asked to change the password after signing in.</p>
-        </form>
-      </section>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Operations Intelligence Dashboard</title>
+  <link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<section id="tab-dashboards" class="tab-panel">
+<div class="dash-header">
+  <div>
+    <p class="eyebrow">Operations Intelligence</p>
+    <h2 class="dashboard-title">Live Dashboard</h2>
+  </div>
+  <div class="dash-header-right">
+    <span class="autorefresh-indicator" id="autorefresh-dot" hidden></span>
+    <span class="muted" id="dashboard-updated" style="font-size:.78rem">Loading…</span>
+    <label class="autorefresh-label" for="autorefresh-select">Auto</label>
+    <select id="autorefresh-select" class="autorefresh-select">
+      <option value="0">Off</option>
+      <option value="60">1 min</option>
+      <option value="300" selected>5 min</option>
+      <option value="600">10 min</option>
+    </select>
+    <button type="button" id="refresh-dashboard" class="ghost small-button">↺ Refresh</button>
+  </div>
+</div>
+
+<!-- Row 1: KPI cards -->
+<div class="kpi-row" id="kpi-row"></div>
+
+<!-- At Risk panel -->
+<article class="panel at-risk-panel" id="at-risk-panel" hidden>
+  <div class="chart-head">
+    <div><p class="eyebrow" style="color:var(--danger)">Attention Required</p><h3>At-risk tickets — P1, Blocked or aged 10+ days</h3></div>
+    <span id="at-risk-count" class="at-risk-badge"></span>
+  </div>
+  <div id="at-risk-table"></div>
+</article>
+
+<!-- Row 2: Full-width flow chart -->
+<div class="dash-row-full">
+  <article class="panel dash-chart-main">
+    <div class="chart-head">
+      <div><p class="eyebrow">Ticket Flow</p><h3>Opened vs Closed — last 8 weeks</h3></div>
+      <span id="flow-net-delta" class="net-delta-badge neutral"></span>
     </div>
+    <div id="weekly-flow-chart" class="svg-chart-wrap"></div>
+  </article>
+</div>
 
+<!-- ── PIVOT TABLES ─────────────────────────────────────────────────────────── -->
 
-    <div id="password-reset-overlay" class="login-overlay" hidden>
-      <section class="login-card">
-        <p class="eyebrow">Security Update</p>
-        <h2>Change your password</h2>
-        <p class="muted">Your account requires a new password before continuing.</p>
-        <form id="password-reset-form" class="stack">
-          <label>Current password
-            <input id="password-reset-current" required type="password" autocomplete="current-password" />
-          </label>
-          <label>New password
-            <input id="password-reset-new" required type="password" autocomplete="new-password" minlength="10" />
-          </label>
-          <label>Confirm new password
-            <input id="password-reset-confirm" required type="password" autocomplete="new-password" minlength="10" />
-          </label>
-          <button type="submit">Update password</button>
-          <p class="muted">Use at least 10 characters, with uppercase, lowercase and a number.</p>
-        </form>
-      </section>
+<!-- Pivot 1: Assignee × Priority cross-tab -->
+<div class="pivot-section">
+  <p class="pivot-section-title">📊 Workload by Assignee &amp; Priority</p>
+  <article class="panel">
+    <div class="chart-head">
+      <div><p class="eyebrow">Pivot Table</p><h3>Open tickets — Assignee × Priority</h3></div>
+      <span class="muted" style="font-size:.72rem">Click column headers to sort</span>
     </div>
+    <div id="pivot-assignee-priority"></div>
+  </article>
+</div>
 
-    <div class="shell">
-      <aside class="sidebar">
-        <div class="brand-block">
-          <p class="eyebrow">Operations Workspace</p>
-          <h1>Control Room</h1>
-          <p class="brand-subtitle">Ticket Tracker</p>
-          <p class="muted">Execute tickets, analyze trends, and govern access from one professional workspace.</p>
-        </div>
-
-        <section class="panel">
-          <div class="header-row">
-            <h2>Session</h2>
-            <button id="logout-button" type="button" class="ghost">Logout</button>
-          </div>
-          <p class="muted">User: <strong id="session-user">-</strong></p>
-          <p class="muted">Role: <strong id="session-role">-</strong></p>
-        </section>
-      </aside>
-
-      <main class="content">
-        <section class="hero">
-          <div>
-            <p class="eyebrow">Control Surface</p>
-            <h2>Tickets Management, Dashboards, Roles and Grants</h2>
-            <p class="muted">Operate lifecycle, capacity, compliance, and security at production level.</p>
-          </div>
-          <div id="message" class="message" hidden></div>
-        </section>
-
-        <nav class="section-tabs panel">
-          <button type="button" class="tab-button" data-tab="entry">Data Entry</button>
-          <button type="button" class="tab-button active" data-tab="tickets">Tickets Management</button>
-          <button type="button" class="tab-button" data-tab="dashboards">Dashboards</button>
-          <button type="button" class="tab-button" data-tab="roles">Roles and Grants</button>
-        </nav>
-
-        <section id="tab-entry" class="tab-panel">
-
-          <!-- Data Tools: Import / Export -->
-          <section class="panel" id="tools-panel">
-            <div class="chart-head">
-              <div><p class="eyebrow">Data Tools</p><h3>Import &amp; Export</h3></div>
-            </div>
-            <div class="tools-grid">
-              <div class="tool-card tool-card--manager" id="tool-import-card">
-                <div class="tool-card-top">
-                  <div class="tool-card-icon">⬆</div>
-                  <div class="tool-card-body">
-                    <strong>Import from CSV</strong>
-                    <p class="muted">Bulk-create tickets from a spreadsheet</p>
-                  </div>
-                </div>
-                <button type="button" id="import-csv" class="ghost small-button">Import CSV</button>
-              </div>
-              <div class="tool-card">
-                <div class="tool-card-top">
-                  <div class="tool-card-icon">⬇</div>
-                  <div class="tool-card-body">
-                    <strong>Export to CSV</strong>
-                    <p class="muted">Download filtered tickets as CSV</p>
-                  </div>
-                </div>
-                <button type="button" id="export-csv" class="ghost small-button">Export CSV</button>
-              </div>
-            </div>
-          </section>
-
-          <!-- Import History — managers/admins only -->
-          <section class="panel" id="import-history-panel">
-            <div class="chart-head">
-              <div>
-                <p class="eyebrow">Import History</p>
-                <h3>Bulk import batches</h3>
-              </div>
-              <button type="button" id="open-import-from-entry" class="ghost small-button">New import</button>
-            </div>
-            <div id="import-history-list" class="audit-list"></div>
-          </section>
-
-          <section class="panel">
-            <div class="chart-head">
-              <div>
-                <p class="eyebrow">Ticket Intake</p>
-                <h3>Create a new issue record</h3>
-              </div>
-            </div>
-            <form id="ticket-form" class="entry-layout">
-              <article class="entry-block">
-                <p class="eyebrow">Issue details</p>
-                <label>Description<textarea id="description" required rows="5"></textarea></label>
-                <label>JD ticket number<input id="jd_ticket_number" required placeholder="6914450" /></label>
-                <label>Category<select id="category" required></select></label>
-                <label>Initial note<textarea id="updates_comments" rows="5" placeholder="Opening context for activity timeline"></textarea></label>
-              </article>
-              <article class="entry-block">
-                <p class="eyebrow">Ownership</p>
-                <label>Assignee<select id="assignee" required></select></label>
-                <label>Manager<select id="manager" required></select></label>
-                <p class="eyebrow">Lifecycle</p>
-                <div class="entry-grid">
-                  <label>Priority<select id="priority" required></select></label>
-                  <label>Date opened<input id="date_opening" required type="date" /></label>
-                </div>
-                <div class="actions">
-                  <button type="submit" id="submit-button">Create ticket</button>
-                  <button type="button" id="reset-form" class="ghost">Reset</button>
-                </div>
-              </article>
-            </form>
-          </section>
-        </section>
-
-        <section id="tab-tickets" class="tab-panel active">
-          <div class="panel">
-            <div class="chart-head">
-              <div>
-                <p class="eyebrow">Ticket Register</p>
-                <h3>Search, SLA, and execution</h3>
-              </div>
-              <div class="actions-inline">
-                <button id="import-csv" type="button" class="ghost">Import CSV</button>
-                <button id="export-csv" type="button" class="ghost">Export CSV</button>
-                <span id="ticket-count" class="pill"></span>
-              </div>
-            </div>
-
-            <form id="filters-form" class="filter-grid">
-              <label>Search<input id="search-input" name="q" type="search" placeholder="JD, keywords, comments..." /></label>
-              <label>Status<select name="status" id="filter-status"></select></label>
-              <label>Priority<select name="priority" id="filter-priority"></select></label>
-              <label>Category<select name="category" id="filter-category"></select></label>
-              <label>Assignee<select name="assignee" id="filter-assignee"></select></label>
-              <label>Manager<select name="manager" id="filter-manager"></select></label>
-              <label>Date from<input name="date_from" id="filter-date-from" type="date" /></label>
-              <label>Date to<input name="date_to" id="filter-date-to" type="date" /></label>
-              <div class="filter-actions" style="grid-column: span 2">
-                <button type="button" id="clear-filters" class="ghost">Clear</button>
-                <button type="button" id="save-view" class="ghost">Save view</button>
-              </div>
-            </form>
-
-            <div id="active-filters-banner" class="active-filters-banner" hidden>
-              <span>⚠ Filters are active — results are limited to matching tickets.</span>
-              <button type="button" id="clear-filters-banner" class="ghost">Clear all filters</button>
-            </div>
-
-            <div class="saved-views">
-              <p class="eyebrow">Saved Views</p>
-              <div id="views-list" class="views-list"></div>
-            </div>
-
-            <div class="tickets-toolbar">
-              <span id="non-closed-badge" class="non-closed-badge" title="Tickets that are Open, In Progress or Blocked"></span>
-              <div class="tickets-toolbar-nav">
-                <label class="per-page-label">Show
-                  <select id="per-page-select-top">
-                    <option value="25">25</option>
-                    <option value="50" selected>50</option>
-                    <option value="100">100</option>
-                  </select>
-                </label>
-                <button type="button" id="page-prev-top" class="ghost small-button" disabled>‹ Prev</button>
-                <span id="page-info-top" class="pagination-info">—</span>
-                <button type="button" id="page-next-top" class="ghost small-button" disabled>Next ›</button>
-              </div>
-            </div>
-
-            <div class="board-head">
-              <p class="eyebrow">Kanban Board</p>
-              <p class="muted">Drag cards between columns to transition status. Click any card to open its detail panel.</p>
-            </div>
-            <div id="kanban-board" class="kanban-board"></div>
-
-            <div class="table-wrapper" style="border-radius: 14px; border: 1px solid rgba(153,173,197,0.1); overflow: hidden">
-              <table>
-                <thead>
-                  <tr>
-                    <th>JD</th>
-                    <th>Description</th>
-                    <th>Category</th>
-                    <th>Priority</th>
-                    <th>Status</th>
-                    <th>Assignee</th>
-                    <th>Manager</th>
-                    <th>Opened</th>
-                    <th>Due</th>
-                    <th>Aging</th>
-                    <th>SLA</th>
-                    <th>Action</th>
-                  </tr>
-                </thead>
-                <tbody id="tickets-table-body"></tbody>
-              </table>
-            </div>
-            <div id="pagination-controls" class="pagination-controls"></div>
-          </div>
-        </section>
-
-        <section id="tab-dashboards" class="tab-panel">
-          <div class="dash-header">
-            <div>
-              <p class="eyebrow">Operations Intelligence</p>
-              <h2 class="dashboard-title">Live Dashboard</h2>
-            </div>
-            <div class="dash-header-right">
-              <span class="autorefresh-indicator" id="autorefresh-dot" hidden></span>
-              <span class="muted" id="dashboard-updated" style="font-size:.78rem">Loading…</span>
-              <label class="autorefresh-label" for="autorefresh-select">Auto</label>
-              <select id="autorefresh-select" class="autorefresh-select">
-                <option value="0">Off</option>
-                <option value="60">1 min</option>
-                <option value="300" selected>5 min</option>
-                <option value="600">10 min</option>
-              </select>
-              <button type="button" id="refresh-dashboard" class="ghost small-button">↺ Refresh</button>
-            </div>
-          </div>
-
-          <!-- Row 1: KPI cards -->
-          <div class="kpi-row" id="kpi-row"></div>
-
-          <!-- At Risk panel -->
-          <article class="panel at-risk-panel" id="at-risk-panel" hidden>
-            <div class="chart-head">
-              <div><p class="eyebrow" style="color:var(--danger)">Attention Required</p><h3>At-risk tickets — P1, Blocked or aged 10+ days</h3></div>
-              <span id="at-risk-count" class="at-risk-badge"></span>
-            </div>
-            <div id="at-risk-table"></div>
-          </article>
-
-          <!-- Row 2: Full-width flow chart -->
-          <div class="dash-row-full">
-            <article class="panel dash-chart-main">
-              <div class="chart-head">
-                <div><p class="eyebrow">Ticket Flow</p><h3>Opened vs Closed — last 8 weeks</h3></div>
-                <span id="flow-net-delta" class="net-delta-badge neutral"></span>
-              </div>
-              <div id="weekly-flow-chart" class="svg-chart-wrap"></div>
-            </article>
-          </div>
-
-          <!-- Row 3: Three comparison charts -->
-          <div class="dash-row-three">
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Resolution Speed</p><h3>Lead time distribution</h3></div></div>
-              <div id="lead-time-chart"></div>
-            </article>
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Open by Category</p><h3>Active tickets per category</h3></div></div>
-              <div id="category-trend-chart"></div>
-            </article>
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Resolution Health</p><h3>Quality &amp; speed metrics</h3></div></div>
-              <div id="closed-assignee-chart"></div>
-            </article>
-          </div>
-
-          <!-- Row 4: Workload + Activity -->
-          <div class="dash-row-wide">
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Team Workload</p><h3>Open tickets per assignee</h3></div></div>
-              <div id="workload-table" class="workload-table"></div>
-            </article>
-            <article class="panel">
-              <div class="chart-head"><div><p class="eyebrow">Recent Activity</p><h3>Latest updates</h3></div></div>
-              <div id="activity-feed" class="activity-feed"></div>
-            </article>
-          </div>
-
-          <!-- Row 5: Backlog health (keep) -->
-          <article class="panel">
-            <div class="chart-head"><div><p class="eyebrow">Backlog Health</p><h3>Priority &amp; aging</h3></div></div>
-            <div class="dash-row-health">
-              <div id="priority-chart"></div>
-              <div id="aging-buckets-chart"></div>
-            </div>
-          </article>
-        </section>
-
-        <section id="tab-roles" class="tab-panel">
-          <div class="roles-layout">
-            <section class="panel">
-              <p class="eyebrow">Access Registry</p>
-              <h3>Users and roles</h3>
-              <form id="user-form" class="stack dense">
-                <input type="hidden" id="user-id" />
-                <label>Full name<input id="user-name" required /></label>
-                <label>Email (for notifications)<input id="user-email" type="email" placeholder="user@example.com" /></label>
-                <label>Role<select id="user-role" required></select></label>
-                <label>Temporary password<input id="user-password" type="password" placeholder="Leave empty to keep current password" /></label>
-                <label class="checkbox-row"><input id="user-active" type="checkbox" checked /><span>Active access</span></label>
-                <label class="checkbox-row"><input id="user-password-reset-required" type="checkbox" checked /><span>Force password reset on next login</span></label>
-                <div class="actions">
-                  <button type="submit" id="user-submit">Save user</button>
-                  <button type="button" id="user-reset" class="ghost">Reset</button>
-                </div>
-              </form>
-            </section>
-
-            <section class="panel">
-              <p class="eyebrow">Directory</p>
-              <h3>Users with platform access</h3>
-              <div id="users-list" class="users-list" style="margin-top:12px"></div>
-            </section>
-          </div>
-
-          <section class="panel">
-            <p class="eyebrow">Webhooks</p>
-            <h3>External automation integration</h3>
-            <form id="webhook-form" class="webhook-grid" style="align-items: end">
-              <input type="hidden" id="webhook-id" />
-              <label>Name<input id="webhook-name" required /></label>
-              <label>URL<input id="webhook-url" required placeholder="https://example.com/hook" /></label>
-              <label>Signing secret<input id="webhook-secret" type="password" placeholder="Optional HMAC secret" /></label>
-              <label class="checkbox-row"><input id="webhook-active" type="checkbox" checked /><span>Enabled</span></label>
-              <div class="actions">
-                <button type="submit" id="webhook-submit">Save webhook</button>
-                <button type="button" id="webhook-reset" class="ghost">Reset</button>
-              </div>
-            </form>
-            <div id="webhooks-list" class="users-list"></div>
-            <div class="saved-views">
-              <p class="eyebrow">Recent Deliveries</p>
-              <div id="webhook-deliveries-list" class="audit-list"></div>
-            </div>
-          </section>
-
-          <section class="panel">
-            <p class="eyebrow">Audit Trail</p>
-            <h3>Immutable security and change log</h3>
-            <div id="audit-list" class="audit-list" style="margin-top:12px"></div>
-          </section>
-        </section>
-      </main>
+<!-- Pivot 2: Category × Status cross-tab -->
+<div class="pivot-section">
+  <p class="pivot-section-title">📋 Open Tickets by Category &amp; Status</p>
+  <article class="panel">
+    <div class="chart-head">
+      <div><p class="eyebrow">Pivot Table</p><h3>Category × Status breakdown</h3></div>
     </div>
+    <div id="pivot-category-status"></div>
+  </article>
+</div>
 
-    <aside id="ticket-detail" class="ticket-detail" hidden>
-      <div class="ticket-detail-card panel">
-        <div class="chart-head">
-          <div>
-            <p class="eyebrow">Ticket Detail</p>
-            <h3 id="detail-title">Ticket</h3>
-          </div>
-          <button type="button" id="close-detail" class="ghost">Close</button>
-        </div>
-
-        <section class="detail-layout">
-          <article class="detail-summary">
-            <div class="detail-header">
-              <div>
-                <p class="eyebrow">Issue Summary</p>
-                <h4 id="detail-description"></h4>
-              </div>
-              <div class="detail-badges">
-                <span id="detail-priority" class="badge"></span>
-                <span id="detail-status" class="badge"></span>
-              </div>
-            </div>
-            <div class="detail-meta-grid">
-              <div class="meta-card"><span class="meta-label">JD ticket</span><strong id="detail-jd-ticket-number"></strong></div>
-              <div class="meta-card"><span class="meta-label">Category</span><strong id="detail-category"></strong></div>
-              <div class="meta-card"><span class="meta-label">Assignee</span><strong id="detail-assignee"></strong></div>
-              <div class="meta-card"><span class="meta-label">Manager</span><strong id="detail-manager"></strong></div>
-              <div class="meta-card"><span class="meta-label">Opened</span><strong id="detail-date-opening"></strong></div>
-              <div class="meta-card"><span class="meta-label">Closed</span><strong id="detail-date-closed"></strong></div>
-              <div class="meta-card"><span class="meta-label">Aging</span><strong id="detail-aging"></strong></div>
-              <div class="meta-card"><span class="meta-label">Comments</span><strong id="detail-comment-count"></strong></div>
-            </div>
-
-            <div class="manager-panel">
-              <p class="eyebrow">Manager Controls</p>
-              <h4>Original ticket updates</h4>
-              <form id="manager-edit-form" class="stack dense">
-                <label>Description<textarea id="manager-description" rows="3" required></textarea></label>
-                <div class="manager-grid">
-                  <label>JD ticket number<input id="manager-jd-ticket-number" required /></label>
-                  <label>Category<select id="manager-category" required></select></label>
-                  <label>Priority<select id="manager-priority" required></select></label>
-                  <label>Status<select id="manager-status" required></select></label>
-                  <label>Assignee<select id="manager-assignee" required></select></label>
-                  <label>Manager<select id="manager-manager" required></select></label>
-                  <label>Date opened<input id="manager-date-opening" type="date" required /></label>
-                  <label>Date closed<input id="manager-date-closed" type="date" /></label>
-                </div>
-                <div class="actions">
-                  <button type="submit">Save original ticket</button>
-                  <span class="muted">Requires manager/admin role with valid workflow transition.</span>
-                </div>
-              </form>
-            </div>
-
-            <div id="delete-ticket-zone" class="danger-zone" hidden>
-              <p class="eyebrow" style="color:var(--danger)">Danger zone</p>
-              <div class="danger-zone-row">
-                <div>
-                  <strong>Delete this ticket</strong>
-                  <p class="muted">Permanently removes the ticket and all its comments. This cannot be undone.</p>
-                </div>
-                <button type="button" id="delete-ticket" class="btn-danger">Delete ticket</button>
-              </div>
-            </div>
-          </article>
-
-          <article class="detail-activity">
-            <div class="comment-composer">
-              <p class="eyebrow">Activity</p>
-              <h4>New comment</h4>
-              <label>Author<select id="detail-comment-author"></select></label>
-              <label>Type<select id="detail-comment-type"></select></label>
-              <div class="template-row">
-                <button type="button" class="ghost small-button" data-template="Investigating root cause and collecting logs.">Investigate</button>
-                <button type="button" class="ghost small-button" data-template="Blocked by dependency. Escalated to owner.">Blocked</button>
-                <button type="button" class="ghost small-button" data-template="Fix applied and validated in operations.">Resolved</button>
-              </div>
-              <label>Comment<textarea id="detail-new-comment" rows="5" placeholder="Write a clear operational update..."></textarea></label>
-              <div class="actions"><button type="button" id="post-comment">Post comment</button></div>
-            </div>
-            <div class="activity-feed">
-              <p class="eyebrow">Timeline</p>
-              <h4>Ticket activity</h4>
-              <div id="comments-list" class="comments-list"></div>
-            </div>
-            <div id="attachments-section" class="attachments-section"></div>
-          </article>
-        </section>
-      </div>
-    </aside>
-
-    <template id="summary-card-template">
-      <article class="summary-card">
-        <span class="summary-label"></span>
-        <strong class="summary-value"></strong>
-      </article>
-    </template>
-
-    <!-- Import CSV Modal -->
-    <div id="import-overlay" class="import-overlay" hidden>
-      <div class="import-card panel">
-        <div class="chart-head">
-          <div>
-            <p class="eyebrow">Bulk Import</p>
-            <h3>Import tickets from CSV</h3>
-          </div>
-          <button type="button" id="close-import" class="ghost">Close</button>
-        </div>
-
-        <!-- Step 1: Upload -->
-        <div id="import-step-upload" class="import-step">
-          <div class="drop-zone" id="import-drop-zone">
-            <p class="drop-zone-hint">Drag &amp; drop a <strong>.csv</strong> file here</p>
-            <p class="muted" style="margin:0.5rem 0">— or —</p>
-            <label class="import-browse-label" for="import-file-input">Browse file</label>
-            <input type="file" id="import-file-input" accept=".csv,.txt" hidden />
-            <p class="muted" style="margin-top:1rem;font-size:0.85rem">For Excel files: <em>File → Save As → CSV UTF-8</em></p>
-          </div>
-          <div style="margin-top:1rem">
-            <button type="button" id="download-template" class="ghost small-button">Download template CSV</button>
-          </div>
-        </div>
-
-        <!-- Step 2: Column Mapping -->
-        <div id="import-step-mapping" class="import-step" hidden>
-          <p class="eyebrow">Step 2 — Column Mapping</p>
-          <p class="muted">Map your file's columns to ticket fields. Required fields must be mapped.</p>
-          <div id="column-mapping-table" class="column-mapping-table"></div>
-          <div class="actions" style="margin-top:1rem">
-            <button type="button" id="import-proceed">Preview <span id="import-row-count">0</span> rows</button>
-            <button type="button" id="import-back-upload" class="ghost">Back</button>
-          </div>
-        </div>
-
-        <!-- Step 3: Preview -->
-        <div id="import-step-preview" class="import-step" hidden>
-          <p class="eyebrow">Step 3 — Preview</p>
-          <div id="import-preview-summary" class="import-preview-summary"></div>
-          <div class="table-wrapper import-preview-wrap">
-            <table>
-              <thead><tr id="import-preview-head"></tr></thead>
-              <tbody id="import-preview-body"></tbody>
-            </table>
-          </div>
-          <div class="actions" style="margin-top:1rem">
-            <button type="button" id="import-confirm">Import valid rows</button>
-            <button type="button" id="import-back-mapping" class="ghost">Back</button>
-          </div>
-        </div>
-
-        <!-- Step 4: Results -->
-        <div id="import-step-results" class="import-step" hidden>
-          <div id="import-results-content" class="import-results"></div>
-          <div class="actions" style="margin-top:1.5rem">
-            <button type="button" id="import-done">Done</button>
-          </div>
-        </div>
-      </div>
+<!-- Pivot 3: Summary metrics grid -->
+<div class="pivot-section">
+  <p class="pivot-section-title">📈 Summary Metrics &amp; Aging</p>
+  <article class="panel">
+    <div class="chart-head">
+      <div><p class="eyebrow">Analytics Grid</p><h3>Key metrics &amp; backlog aging</h3></div>
     </div>
+    <div id="pivot-summary-grid"></div>
+  </article>
+</div>
 
-    <script type="module" src="/app.js"></script>
-  </body>
+<!-- ── ORIGINAL CHARTS ───────────────────────────────────────────────────────── -->
+
+<!-- Row 3: Three comparison charts -->
+<div class="dash-row-three">
+  <article class="panel">
+    <div class="chart-head"><div><p class="eyebrow">Resolution Speed</p><h3>Lead time distribution</h3></div></div>
+    <div id="lead-time-chart"></div>
+  </article>
+  <article class="panel">
+    <div class="chart-head"><div><p class="eyebrow">Open by Category</p><h3>Active tickets per category</h3></div></div>
+    <div id="category-trend-chart"></div>
+  </article>
+  <article class="panel">
+    <div class="chart-head"><div><p class="eyebrow">Resolution Health</p><h3>Quality &amp; speed metrics</h3></div></div>
+    <div id="closed-assignee-chart"></div>
+  </article>
+</div>
+
+<!-- Row 4: Workload + Activity -->
+<div class="dash-row-wide">
+  <article class="panel">
+    <div class="chart-head"><div><p class="eyebrow">Team Workload</p><h3>Open tickets per assignee</h3></div></div>
+    <div id="workload-table" class="workload-table"></div>
+  </article>
+  <article class="panel">
+    <div class="chart-head"><div><p class="eyebrow">Recent Activity</p><h3>Latest updates</h3></div></div>
+    <div id="activity-feed" class="activity-feed"></div>
+  </article>
+</div>
+
+<!-- Row 5: Backlog health -->
+<article class="panel">
+  <div class="chart-head"><div><p class="eyebrow">Backlog Health</p><h3>Priority &amp; aging</h3></div></div>
+  <div class="dash-row-health">
+    <div id="priority-chart"></div>
+    <div id="aging-buckets-chart"></div>
+  </div>
+</article>
+</section>
+<script src="app.js"></script>
+</body>
 </html>
