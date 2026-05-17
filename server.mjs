@@ -116,7 +116,6 @@ async function createPool() {
         password: DB_PASS,
         database: DB_NAME,
         namedPlaceholders: true,
-        multipleStatements: true,
         allowPublicKeyRetrieval: true,
       });
       console.log(`[db] Connected to MySQL at ${DB_HOST}:${DB_PORT}`);
@@ -774,9 +773,9 @@ function validatePassword(password) {
   }
 }
 
-function normalizeTicketInput(input) {
-  const assignees = getAllowedAssignees();
-  const managers = getManagers();
+async function normalizeTicketInput(input) {
+  const assignees = await getAllowedAssignees();
+  const managers = await getManagers();
   const ticket = {
     description: String(input.description || '').trim(),
     jd_ticket_number: String(input.jd_ticket_number || '').trim(),
@@ -804,11 +803,11 @@ function normalizeTicketInput(input) {
   return ticket;
 }
 
-function normalizeCommentInput(input) {
+async function normalizeCommentInput(input) {
   const author = String(input.author || '').trim();
   const commentType = String(input.comment_type || 'Update').trim();
   const body = String(input.body || '').trim();
-  if (!getCommentAuthors().includes(author)) throw new HttpError(400, 'Invalid comment author.');
+  if (!(await getCommentAuthors()).includes(author)) throw new HttpError(400, 'Invalid comment author.');
   if (!COMMENT_TYPES.includes(commentType)) throw new HttpError(400, 'Invalid comment type.');
   if (!body) throw new HttpError(400, 'Comment body is required.');
   return { author, comment_type: commentType, body };
@@ -1575,7 +1574,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  const auth = authFromRequest(request);
+  const auth = await authFromRequest(request);
   const isMutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method || '');
 
   try {
@@ -1955,7 +1954,7 @@ const server = createServer(async (request, response) => {
             assignee: allAssignees.includes(String(row.assignee || '').trim()) ? String(row.assignee).trim() : (allAssignees[0] || ''),
             manager:  allManagers.includes(String(row.manager || '').trim())  ? String(row.manager).trim()  : (allManagers[0] || ''),
           };
-          const ticket = normalizeTicketInput(preprocessed);
+          const ticket = await normalizeTicketInput(preprocessed);
           const existing = (await query('SELECT id FROM tickets WHERE jd_ticket_number = ?', [ticket.jd_ticket_number])).length > 0;
           if (existing) {
             errors.push({ row: i + 1, jd_ticket_number: ticket.jd_ticket_number, message: `Duplicate: JD ${ticket.jd_ticket_number} already exists.` });
