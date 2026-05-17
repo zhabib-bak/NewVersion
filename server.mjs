@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { stat, copyFile, mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { createReadStream, existsSync, mkdirSync } from 'node:fs';
 import { extname, join, normalize } from 'node:path';
-import { createConnection as mysqlCreateConnection } from 'mysql2/promise';
+import { createPool as mysqlCreatePool } from 'mysql2/promise';
 import { URL } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual, createHmac } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
@@ -88,6 +88,10 @@ const RATE_LIMITS = {
   read: { windowMs: 60_000, max: 600 }
 };
 
+function log(level, msg, ctx = {}) {
+  process.stdout.write(JSON.stringify({ ts: new Date().toISOString(), level, msg, ...ctx }) + '\n');
+}
+
 mkdirSync(DATA_DIR, { recursive: true });
 mkdirSync(BACKUP_DIR, { recursive: true });
 mkdirSync(join(DATA_DIR, 'uploads'), { recursive: true });
@@ -104,24 +108,29 @@ const DB_PASS = process.env.DB_PASS || 'u2!h$fH$29QPQcY';
 // Create MySQL connection pool
 let pool;
 
-async function createPool() {
+async function initPool() {
   const maxRetries = 5;
   const retryDelayMs = 3000;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      pool = await mysqlCreateConnection({
+      pool = mysqlCreatePool({
         host: DB_HOST,
         port: DB_PORT,
         user: DB_USER,
         password: DB_PASS,
         database: DB_NAME,
+        connectionLimit: 10,
+        waitForConnections: true,
+        queueLimit: 100,
         namedPlaceholders: true,
         allowPublicKeyRetrieval: true,
       });
-      console.log(`[db] Connected to MySQL at ${DB_HOST}:${DB_PORT}`);
+      await pool.execute('SELECT 1');
+      log('info', '[db] MySQL pool connected', { host: DB_HOST, port: DB_PORT });
       return;
     } catch (err) {
-      console.error(`[db] Connection attempt ${attempt}/${maxRetries} failed: ${err.message}`);
+      log('error', `[db] Connection attempt ${attempt}/${maxRetries} failed`, { message: err.message });
+      if (pool) { try { await pool.end(); } catch {} pool = null; }
       if (attempt < maxRetries) await new Promise(r => setTimeout(r, retryDelayMs));
       else throw err;
     }
@@ -129,7 +138,7 @@ async function createPool() {
 }
 
 async function getConnection() {
-  if (!pool) await createPool();
+  if (!pool) await initPool();
   return pool;
 }
 
@@ -172,6 +181,7 @@ await query(`CREATE TABLE IF NOT EXISTS tickets (
   manager VARCHAR(255),
   due_date DATETIME,
   reopened_count INT NOT NULL DEFAULT 0,
+  deleted_at DATETIME NULL DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 )`);
@@ -273,6 +283,7 @@ async function ensureColumn(table, column, definition) {
 
 await ensureColumn('tickets', 'due_date', 'DATETIME');
 await ensureColumn('tickets', 'reopened_count', 'INT NOT NULL DEFAULT 0');
+await ensureColumn('tickets', 'deleted_at', 'DATETIME NULL DEFAULT NULL');
 await ensureColumn('user_accounts', 'auth_pin_hash', 'VARCHAR(255)');
 await ensureColumn('user_accounts', 'auth_secret_hash', 'VARCHAR(255)');
 await ensureColumn('user_accounts', 'password_reset_required', 'TINYINT NOT NULL DEFAULT 1');
@@ -316,20 +327,21 @@ const stmtUsers = {
 };
 
 const stmtTickets = {
-  byId: async (id) => (await query('SELECT * FROM tickets WHERE id = ?', [id]))[0],
-  listBase: async (where) => await query(`
+  byId: async (id) => (await query('SELECT * FROM tickets WHERE id = ? AND deleted_at IS NULL', [id]))[0],
+  listBase: async (where, params = []) => await query(`
     SELECT * FROM tickets
     ${where}
     ORDER BY
       CASE priority WHEN 'P1 high' THEN 1 WHEN 'P2 medium' THEN 2 ELSE 3 END,
       date_opening DESC,
       id DESC
-  `),
+  `, params),
   insert: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date) =>
     await query('INSERT INTO tickets (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, CURRENT_TIMESTAMP)', [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date]),
   update: async (description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id) =>
     await query('UPDATE tickets SET description = ?, jd_ticket_number = ?, category = ?, updates_comments = ?, priority = ?, date_opening = ?, date_closed = ?, status = ?, assignee = ?, manager = ?, due_date = ?, reopened_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [description, jd_ticket_number, category, updates_comments, priority, date_opening, date_closed, status, assignee, manager, due_date, reopened_count, id]),
-  delete: async (id) => await query('DELETE FROM tickets WHERE id = ?', [id])
+  delete: async (id) => await query('UPDATE tickets SET deleted_at = NOW() WHERE id = ?', [id]),
+  restore: async (id) => await query('UPDATE tickets SET deleted_at = NULL WHERE id = ?', [id])
 };
 
 const stmtComments = {
@@ -466,7 +478,7 @@ async function bootstrapDataStore() {
   if (!existsSync(DATA_DIR)) {
     mkdirSync(DATA_DIR, { recursive: true });
   }
-  console.log('[bootstrap] MySQL database initialized');
+  log('info', '[bootstrap] MySQL database initialized');
 }
 
 async function loadOrCreateEncryptionKey() {
@@ -592,6 +604,7 @@ function securityHeaders(extra = {}) {
       "base-uri 'self'",
       "form-action 'self'"
     ].join('; '),
+    ...(IS_PROD ? { 'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload' } : {}),
     ...extra
   };
 }
@@ -683,7 +696,6 @@ function getRateBucket(method, pathname) {
 }
 
 async function authFromRequest(request) {
-  await stmtSessions.purge();
   const cookies = parseCookies(request);
   const sid = cookies.session_id;
   if (!sid) return null;
@@ -717,7 +729,8 @@ function assertRole(auth, minRole) {
 
 function assertCsrf(request, auth) {
   const token = request.headers['x-csrf-token'];
-  if (!auth || typeof token !== 'string' || token !== auth.csrfToken) {
+  if (!auth || typeof token !== 'string' || token.length !== (auth.csrfToken || '').length ||
+      !timingSafeEqual(Buffer.from(token), Buffer.from(auth.csrfToken || ''))) {
     throw new HttpError(403, 'Invalid CSRF token.');
   }
 }
@@ -886,11 +899,11 @@ async function hydrateTicket(row, { withAttachments = true } = {}) {
 
 async function listTickets(searchParams, { paginate = true } = {}) {
   const page = Math.max(1, Number(searchParams.get('page') || 1));
-  const perPage = Math.min(200, Math.max(10, Number(searchParams.get('per_page') || 50)));
+  const perPage = Math.min(200, Math.max(1, Number(searchParams.get('per_page') || searchParams.get('perPage') || 50)));
 
-  const filters = [];
-  const values = [];
-  
+  const filters = ['deleted_at IS NULL'];
+  const whereParams = [];
+
   // Advanced search parameters
   const search = (searchParams.get('search') || '').trim();
   const q = (searchParams.get('q') || '').trim();
@@ -924,17 +937,17 @@ async function listTickets(searchParams, { paginate = true } = {}) {
       id IN (SELECT ticket_id FROM ticket_comments WHERE body LIKE ? OR author LIKE ?)
     )`);
     const pattern = `%${searchQuery}%`;
-    values.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern);
+    whereParams.push(pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern, pattern);
   }
 
   // Handle multiple values for advanced filters
   const multiFilters = ['status', 'priority', 'category', 'assignee', 'manager'];
   for (const filter of multiFilters) {
-    const values = getArrayParam(filter);
-    if (values.length > 0) {
-      const placeholders = values.map(() => '?').join(',');
+    const multiVals = getArrayParam(filter);
+    if (multiVals.length > 0) {
+      const placeholders = multiVals.map(() => '?').join(',');
       filters.push(`${filter} IN (${placeholders})`);
-      values.push(...values);
+      whereParams.push(...multiVals);
     }
   }
 
@@ -942,7 +955,7 @@ async function listTickets(searchParams, { paginate = true } = {}) {
   for (const [key, value] of Object.entries(directFilters)) {
     if (value && !getArrayParam(key).length) {
       filters.push(`${key} = ?`);
-      values.push(value);
+      whereParams.push(value);
     }
   }
 
@@ -951,42 +964,58 @@ async function listTickets(searchParams, { paginate = true } = {}) {
   const dateTo = (searchParams.get('date_end') || searchParams.get('date_to') || '').trim();
   if (dateFrom) {
     filters.push('date_opening >= ?');
-    values.push(dateFrom);
+    whereParams.push(dateFrom);
   }
   if (dateTo) {
     filters.push('date_opening <= ?');
-    values.push(dateTo);
+    whereParams.push(dateTo);
   }
 
   // Tags filter (if implemented in future)
   const tags = getArrayParam('tags');
   if (tags.length > 0) {
-    // For now, tags would be stored in a separate table or as JSON
-    // This is a placeholder for future implementation
     const tagPatterns = tags.map(tag => `%${tag.trim()}%`);
     const tagPlaceholders = tagPatterns.map(() => 'description LIKE ?').join(' OR ');
     filters.push(`(${tagPlaceholders})`);
-    values.push(...tagPatterns);
+    whereParams.push(...tagPatterns);
   }
 
-  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
-  let rows = (await stmtTickets.listBase(where)).map((row) => hydrateTicket(row, { withAttachments: false }));
+  const where = `WHERE ${filters.join(' AND ')}`;
+  const orderBy = `ORDER BY CASE priority WHEN 'P1 high' THEN 1 WHEN 'P2 medium' THEN 2 ELSE 3 END, date_opening DESC, id DESC`;
 
+  // sla_breached and aging filters are computed fields — must be applied post-fetch
   const slaOnly = (searchParams.get('sla_breached') || '').trim();
-  if (slaOnly === 'true') rows = rows.filter((ticket) => ticket.is_sla_breached);
-
   const agingMinRaw = searchParams.get('aging_min');
   const agingMaxRaw = searchParams.get('aging_max');
   const agingMin = agingMinRaw === null || agingMinRaw === '' ? null : Number(agingMinRaw);
   const agingMax = agingMaxRaw === null || agingMaxRaw === '' ? null : Number(agingMaxRaw);
-  if (agingMin !== null && Number.isFinite(agingMin)) rows = rows.filter((ticket) => ticket.aging >= agingMin);
-  if (agingMax !== null && Number.isFinite(agingMax)) rows = rows.filter((ticket) => ticket.aging <= agingMax);
+  const needsPostFilter = slaOnly === 'true' || agingMin !== null || agingMax !== null;
 
-  const total = rows.length;
-  if (!paginate) return { tickets: rows, total, page: 1, perPage: total, totalPages: 1 };
+  if (!paginate || needsPostFilter) {
+    // Load all matching rows for post-filter or no-paginate export
+    const rawRows = await stmtTickets.listBase(`${where} ${orderBy}`, whereParams);
+    let rows = await Promise.all(rawRows.map((row) => hydrateTicket(row, { withAttachments: false })));
+    if (slaOnly === 'true') rows = rows.filter((t) => t.is_sla_breached);
+    if (agingMin !== null && Number.isFinite(agingMin)) rows = rows.filter((t) => t.aging >= agingMin);
+    if (agingMax !== null && Number.isFinite(agingMax)) rows = rows.filter((t) => t.aging <= agingMax);
+    const total = rows.length;
+    if (!paginate) return { tickets: rows, total, page: 1, perPage: total, totalPages: 1 };
+    const totalPages = Math.max(1, Math.ceil(total / perPage));
+    const safePage = Math.min(page, totalPages);
+    const tickets = rows.slice((safePage - 1) * perPage, safePage * perPage);
+    return { tickets, total, page: safePage, perPage, totalPages };
+  }
+
+  // DB-level pagination path (no post-filter needed)
+  const offset = (page - 1) * perPage;
+  const [countResult, rawRows] = await Promise.all([
+    query(`SELECT COUNT(*) AS total FROM tickets ${where}`, whereParams),
+    query(`SELECT * FROM tickets ${where} ${orderBy} LIMIT ? OFFSET ?`, [...whereParams, perPage, offset])
+  ]);
+  const total = Number(countResult[0].total);
   const totalPages = Math.max(1, Math.ceil(total / perPage));
   const safePage = Math.min(page, totalPages);
-  const tickets = rows.slice((safePage - 1) * perPage, safePage * perPage);
+  const tickets = await Promise.all(rawRows.map((row) => hydrateTicket(row, { withAttachments: false })));
   return { tickets, total, page: safePage, perPage, totalPages };
 }
 
@@ -1602,7 +1631,7 @@ const server = createServer(async (request, response) => {
       
       if (!validModern && !validLegacy) {
         // Just log the failed attempt without blocking
-        console.log(`[login-failed] User: ${name}, IP: ${ip}`);
+        log('warn', '[login-failed]', { user: name, ip });
         throw new HttpError(401, 'Invalid credentials.');
       }
       
@@ -1966,7 +1995,7 @@ const server = createServer(async (request, response) => {
             ticket.priority, ticket.date_opening, ticket.date_closed, ticket.status,
             ticket.assignee, ticket.manager, due
           );
-          const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = '${ticket.jd_ticket_number}'`);
+          const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = ? AND deleted_at IS NULL`, [ticket.jd_ticket_number]);
           const newId = newTicket[0].id;
           if (ticket.updates_comments) await stmtComments.insert(newId, ticket.assignee, 'Update', ticket.updates_comments);
           createdIds.push(newId);
@@ -2027,11 +2056,11 @@ const server = createServer(async (request, response) => {
       const due = calculateDueDate(payload.date_opening, payload.priority);
       
       // Check for duplicate ticket number first
-      const existing = await stmtTickets.listBase(`WHERE jd_ticket_number = ?`, [payload.jd_ticket_number]);
+      const existing = await stmtTickets.listBase(`WHERE jd_ticket_number = ? AND deleted_at IS NULL`, [payload.jd_ticket_number]);
       if (existing.length > 0) {
         throw new HttpError(409, `Ticket with number ${payload.jd_ticket_number} already exists.`);
       }
-      
+
       // Insert the ticket with proper error handling
       try {
         await stmtTickets.insert(
@@ -2047,9 +2076,9 @@ const server = createServer(async (request, response) => {
           payload.manager,
           due
         );
-        
+
         // Get the newly created ticket
-        const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = ?`, [payload.jd_ticket_number]);
+        const newTicket = await stmtTickets.listBase(`WHERE jd_ticket_number = ? AND deleted_at IS NULL`, [payload.jd_ticket_number]);
         if (!newTicket.length) {
           throw new HttpError(500, 'Failed to retrieve created ticket.');
         }
@@ -2145,6 +2174,19 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === 'POST' && url.pathname.match(/^\/api\/tickets\/\d+\/restore$/)) {
+      assertRole(auth, 'admin');
+      const id = Number(url.pathname.split('/')[3]);
+      if (!Number.isInteger(id)) throw new HttpError(400, 'Invalid ticket id.');
+      const deleted = (await query('SELECT * FROM tickets WHERE id = ? AND deleted_at IS NOT NULL', [id]))[0];
+      if (!deleted) throw new HttpError(404, 'Deleted ticket not found.');
+      await stmtTickets.restore(id);
+      await logAudit('ticket', id, 'restore', auth.name, { jd_ticket_number: deleted.jd_ticket_number });
+      invalidateDashboardCache();
+      sendJson(response, 200, { success: true });
+      return;
+    }
+
     if (request.method === 'POST' && url.pathname.match(/^\/api\/tickets\/\d+\/comments$/)) {
       assertRole(auth, 'user');
       const id = Number(url.pathname.split('/')[3]);
@@ -2232,14 +2274,14 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     const statusCode = error instanceof HttpError ? error.statusCode : 500;
     if (!(error instanceof HttpError)) {
-      console.error('[server-error]', error);
+      log('error', '[server-error]', { message: error.message, stack: error.stack });
     }
     sendJson(response, statusCode, { error: error.message || 'Unexpected error' });
   }
 });
 
 server.listen(PORT, () => {
-  console.log(`Ticket app running on http://localhost:${PORT}`);
+  log('info', 'Ticket app started', { port: PORT, env: process.env.NODE_ENV || 'development' });
 });
 
 async function gracefulShutdown(signal) {
@@ -2256,3 +2298,13 @@ async function gracefulShutdown(signal) {
 }
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
+
+setInterval(() => stmtSessions.purge().catch(e => console.error('[session-purge]', e)), 3_600_000);
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err);
+  process.exit(1);
+});
