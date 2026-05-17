@@ -340,7 +340,7 @@ async function login(event) {
   });
   const data = await response.json();
   if (!response.ok) {
-    showMessage(data.error || "Error de acceso.", true);
+    showMessage(data.error || "Access error.", 'error');
     return;
   }
   if (remember) {
@@ -354,7 +354,7 @@ async function login(event) {
   elements.loginForm.reset();
   showAppSession();
   await loadBootstrap();
-  showMessage(state.passwordResetRequired ? "Sesión iniciada. Debes cambiar la contraseña." : "Sesión iniciada.");
+  showMessage(state.passwordResetRequired ? "Login successful. Please change your password." : "Login successful.", 'success');
 }
 
 async function logout() {
@@ -366,7 +366,7 @@ async function logout() {
   elements.sessionRole.textContent = "-";
   elements.loginOverlay.hidden = false;
   elements.passwordResetOverlay.hidden = true;
-  showMessage("Sesión cerrada.");
+  showMessage("Logged out.", 'info');
 }
 
 async function apiFetch(url, options = {}) {
@@ -379,7 +379,7 @@ async function apiFetch(url, options = {}) {
     state.currentUser = null;
     state.csrfToken = null;
     showLogin();
-    throw new Error("La sesión expiró. Vuelve a iniciar sesión.");
+    throw new Error("Session expired. Please log in again.");
   }
   const contentType = response.headers.get("content-type") || "";
   const payload = contentType.includes("application/json") ? await response.json() : await response.text();
@@ -462,7 +462,7 @@ function renderViews() {
           (view) => `
             <div class="view-chip">
               <button type="button" data-apply-view="${view.id}" class="ghost">${escapeHtml(view.name)}</button>
-              <button type="button" data-delete-view="${view.id}" class="danger-chip">x</button>
+              <button type="button" data-delete-view="${view.id}" class="danger-chip" aria-label="Delete view ${escapeHtml(view.name)}">x</button>
             </div>
           `
         )
@@ -488,9 +488,9 @@ async function saveView() {
       body: JSON.stringify({ name, filter })
     });
     await refreshViews();
-    showMessage("View saved.");
+    showMessage("View saved.", 'success');
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -498,9 +498,9 @@ async function deleteView(id) {
   try {
     await apiFetch(`/api/views/${id}`, { method: "DELETE" });
     await refreshViews();
-    showMessage("View deleted.");
+    showMessage("View deleted.", 'success');
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -515,6 +515,7 @@ function applySavedView(id) {
 }
 
 async function refreshTickets() {
+  setLoading('tickets', true);
   try {
     const params = new URLSearchParams(new FormData(elements.filtersForm));
     
@@ -561,11 +562,14 @@ async function refreshTickets() {
     renderKanban();
     renderPagination();
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
+  } finally {
+    setLoading('tickets', false);
   }
 }
 
 async function refreshDashboard() {
+  setLoading('dashboard', true);
   try {
     const data = await apiFetch("/api/dashboard");
     state.dashboard = data;
@@ -573,11 +577,14 @@ async function refreshDashboard() {
     if (updatedEl) updatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
     renderDashboard();
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
+  } finally {
+    setLoading('dashboard', false);
   }
 }
 
 async function refreshRolesPanel() {
+  setLoading('users', true);
   try {
     const canManage = state.currentUser && (state.currentUser.role === "manager" || state.currentUser.role === "admin");
     if (!canManage) return;
@@ -603,7 +610,9 @@ async function refreshRolesPanel() {
     state.auditEvents = auditPayload.events;
     renderAudit();
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
+  } finally {
+    setLoading('users', false);
   }
 }
 
@@ -618,8 +627,22 @@ function fillSelect(id, values, emptyLabel = "") {
 }
 
 function renderTabs() {
-  elements.tabButtons.forEach((button) => button.classList.toggle("active", button.dataset.tab === state.activeTab));
-  elements.tabPanels.forEach((panel) => panel.classList.toggle("active", panel.id === `tab-${state.activeTab}`));
+  elements.tabButtons.forEach((button) => {
+    const isActive = button.dataset.tab === state.activeTab;
+    button.classList.toggle("active", isActive);
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', String(isActive));
+  });
+  elements.tabPanels.forEach((panel) => {
+    const isActive = panel.id === `tab-${state.activeTab}`;
+    panel.classList.toggle("active", isActive);
+    panel.setAttribute('role', 'tabpanel');
+  });
+  // Mark nav container as tablist if not already done
+  const navContainer = elements.tabButtons[0]?.closest('nav, [class*="tabs"], [class*="nav"]');
+  if (navContainer && !navContainer.getAttribute('role')) {
+    navContainer.setAttribute('role', 'tablist');
+  }
 }
 
 function hasActiveFilters() {
@@ -661,6 +684,9 @@ function renderTicketsToolbar() {
     info.textContent = totalTickets === 0 ? '0 tickets' : `${(currentPage - 1) * perPage + 1}–${Math.min(currentPage * perPage, totalTickets)} of ${totalTickets}`;
     prevBtn.disabled = currentPage <= 1;
     nextBtn.disabled = currentPage >= totalPages;
+    prevBtn.setAttribute('aria-label', 'Previous page');
+    nextBtn.setAttribute('aria-label', 'Next page');
+    info.setAttribute('aria-current', 'page');
   }
 }
 
@@ -728,9 +754,9 @@ function renderKanban() {
 
     const pagination = totalKPages > 1 ? `
       <div class="kanban-pagination">
-        <button class="ghost small-button kp-prev" data-status="${status}" ${kPage <= 1 ? 'disabled' : ''}>‹</button>
-        <span class="kp-info">${kPage} / ${totalKPages}</span>
-        <button class="ghost small-button kp-next" data-status="${status}" ${kPage >= totalKPages ? 'disabled' : ''}>›</button>
+        <button class="ghost small-button kp-prev" data-status="${status}" ${kPage <= 1 ? 'disabled' : ''} aria-label="Previous page in ${status}">‹</button>
+        <span class="kp-info" aria-current="page">${kPage} / ${totalKPages}</span>
+        <button class="ghost small-button kp-next" data-status="${status}" ${kPage >= totalKPages ? 'disabled' : ''} aria-label="Next page in ${status}">›</button>
       </div>` : '';
 
     return `
@@ -799,7 +825,7 @@ function buildPageNumbers(current, total) {
   return pages.map((p) =>
     p === '…'
       ? `<span class="pagination-ellipsis">…</span>`
-      : `<button type="button" class="ghost small-button page-num-btn${p === current ? ' pg-current' : ''}" data-page="${p}">${p}</button>`
+      : `<button type="button" class="ghost small-button page-num-btn${p === current ? ' pg-current' : ''}" data-page="${p}"${p === current ? ' aria-current="page"' : ''} aria-label="Page ${p}">${p}</button>`
   ).join('');
 }
 
@@ -817,11 +843,11 @@ function renderPagination() {
   }
 
   el.innerHTML = `
-    <button type="button" class="ghost small-button" id="page-first" ${currentPage <= 1 ? 'disabled' : ''} title="First page">«</button>
-    <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''}>‹ Prev</button>
+    <button type="button" class="ghost small-button" id="page-first" ${currentPage <= 1 ? 'disabled' : ''} title="First page" aria-label="First page">«</button>
+    <button type="button" class="ghost small-button" id="page-prev" ${currentPage <= 1 ? 'disabled' : ''} aria-label="Previous page">‹ Prev</button>
     ${buildPageNumbers(currentPage, totalPages)}
-    <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''}>Next ›</button>
-    <button type="button" class="ghost small-button" id="page-last" ${currentPage >= totalPages ? 'disabled' : ''} title="Last page">»</button>
+    <button type="button" class="ghost small-button" id="page-next" ${currentPage >= totalPages ? 'disabled' : ''} aria-label="Next page">Next ›</button>
+    <button type="button" class="ghost small-button" id="page-last" ${currentPage >= totalPages ? 'disabled' : ''} title="Last page" aria-label="Last page">»</button>
     ${countInfo}
   `;
   document.getElementById('page-first')?.addEventListener('click', () => { state.currentPage = 1; refreshTickets(); });
@@ -854,9 +880,9 @@ async function updateTicketStatus(ticket, targetStatus) {
     });
     await Promise.all([refreshTickets(), refreshDashboard()]);
     if (state.selectedTicket && state.selectedTicket.id === ticket.id) await openTicketDetail(ticket.id);
-    showMessage("Ticket status updated.");
+    showMessage("Ticket status updated.", 'success');
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1293,7 +1319,7 @@ async function exportCsv() {
     a.remove();
     URL.revokeObjectURL(url);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1317,11 +1343,11 @@ async function saveTicket(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    showMessage("Ticket created.");
+    showMessage("Ticket created.", 'success');
     resetTicketForm();
     await Promise.all([refreshTickets(), refreshDashboard(), refreshRolesPanel()]);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1333,7 +1359,7 @@ async function openTicketDetail(id) {
     renderTicketDetail();
     if (window.location.hash !== `#ticket-${id}`) history.replaceState(null, "", `#ticket-${id}`);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1434,10 +1460,10 @@ async function uploadAttachment(ticketId, file) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ filename: file.name, mimetype: file.type, data: base64 })
         });
-        showMessage('File attached.');
+        showMessage('File attached.', 'success');
         await openTicketDetail(ticketId);
         resolve();
-      } catch (error) { showMessage(error.message, true); reject(error); }
+      } catch (error) { showMessage(error.message, 'error'); reject(error); }
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
@@ -1448,9 +1474,9 @@ async function deleteAttachment(ticketId, attachmentId) {
   if (!window.confirm('Delete this attachment?')) return;
   try {
     await apiFetch(`/api/tickets/${ticketId}/attachments/${attachmentId}`, { method: 'DELETE' });
-    showMessage('Attachment deleted.');
+    showMessage('Attachment deleted.', 'success');
     await openTicketDetail(ticketId);
-  } catch (error) { showMessage(error.message, true); }
+  } catch (error) { showMessage(error.message, 'error'); }
 }
 
 function formatBytes(bytes) {
@@ -1480,11 +1506,11 @@ async function saveOriginalTicket(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    showMessage("Ticket updated.");
+    showMessage("Ticket updated.", 'success');
     await Promise.all([refreshTickets(), refreshDashboard(), refreshRolesPanel()]);
     await openTicketDetail(data.ticket.id);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1501,11 +1527,11 @@ async function postComment() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    showMessage("Comment posted.");
+    showMessage("Comment posted.", 'success');
     await Promise.all([refreshTickets(), refreshDashboard(), refreshRolesPanel()]);
     await openTicketDetail(state.selectedTicket.id);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1526,12 +1552,12 @@ async function saveUser(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    showMessage(userId ? "User updated." : "User created.");
+    showMessage(userId ? "User updated." : "User created.", 'success');
     resetUserForm();
     await Promise.all([refreshMeta(), refreshRolesPanel(), refreshTickets(), refreshDashboard()]);
     if (state.selectedTicket) await openTicketDetail(state.selectedTicket.id);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1577,10 +1603,10 @@ function populateUserForm(id) {
 async function deleteUser(id) {
   try {
     await apiFetch(`/api/users/${id}`, { method: "DELETE" });
-    showMessage("User deleted.");
+    showMessage("User deleted.", 'success');
     await Promise.all([refreshMeta(), refreshRolesPanel(), refreshTickets(), refreshDashboard()]);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1607,11 +1633,11 @@ async function saveWebhook(event) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    showMessage(id ? "Webhook updated." : "Webhook created.");
+    showMessage(id ? "Webhook updated." : "Webhook created.", 'success');
     resetWebhookForm();
     await refreshRolesPanel();
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1662,10 +1688,10 @@ function populateWebhookForm(id) {
 async function deleteWebhook(id) {
   try {
     await apiFetch(`/api/webhooks/${id}`, { method: "DELETE" });
-    showMessage("Webhook deleted.");
+    showMessage("Webhook deleted.", 'success');
     await refreshRolesPanel();
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1699,10 +1725,10 @@ function renderWebhookDeliveries() {
 async function testWebhook(id) {
   try {
     await apiFetch(`/api/webhooks/${id}/test`, { method: "POST" });
-    showMessage("Webhook test sent.");
+    showMessage("Webhook test sent.", 'success');
     await refreshRolesPanel();
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1712,7 +1738,7 @@ async function changePassword(event) {
   const newPassword = elements.passwordResetNew.value;
   const confirmPassword = elements.passwordResetConfirm.value;
   if (newPassword !== confirmPassword) {
-    showMessage("La confirmación de la contraseña no coincide.", true);
+    showMessage("Password confirmation does not match.", 'error');
     return;
   }
   try {
@@ -1721,11 +1747,11 @@ async function changePassword(event) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ current_password: currentPassword, new_password: newPassword })
     });
-    showMessage('Contraseña actualizada. Inicia sesión de nuevo.');
+    showMessage('Password updated. Please log in again.', 'success');
     elements.passwordResetForm.reset();
     await logout();
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -1901,7 +1927,7 @@ function bindImportEvents() {
       a.remove();
       URL.revokeObjectURL(url);
     } catch (error) {
-      showMessage(error.message, true);
+      showMessage(error.message, 'error');
     }
   });
 
@@ -1929,7 +1955,7 @@ function bindImportEvents() {
 
 function openImportModal() {
   if (!state.currentUser || (state.currentUser.role !== "manager" && state.currentUser.role !== "admin")) {
-    showMessage("Import requires manager or admin role.", true);
+    showMessage("Import requires manager or admin role.", 'error');
     return;
   }
   state.importParsed = null;
@@ -1955,14 +1981,14 @@ function showImportStep(step) {
 
 async function handleImportFile(file) {
   if (!file.name.match(/\.(csv|txt)$/i)) {
-    showMessage("Please upload a .csv file. For Excel, use File → Save As → CSV.", true);
+    showMessage("Please upload a .csv file. For Excel, use File → Save As → CSV.", 'error');
     return;
   }
   try {
     const text = await file.text();
     const { headers, records } = parseCsvToObjects(text);
     if (!headers.length || !records.length) {
-      showMessage("File is empty or has no data rows.", true);
+      showMessage("File is empty or has no data rows.", 'error');
       return;
     }
     state.importParsed = { headers, records, fileName: file.name };
@@ -1975,7 +2001,7 @@ async function handleImportFile(file) {
     renderColumnMapping(headers, initialMapping);
     showImportStep("mapping");
   } catch (error) {
-    showMessage("Failed to read file: " + error.message, true);
+    showMessage("Failed to read file: " + error.message, 'error');
   }
 }
 
@@ -2047,7 +2073,7 @@ function showImportPreview() {
   const missingRequired = requiredFields.filter((f) => !mappedSystemFields.includes(f));
   if (missingRequired.length) {
     const labels = missingRequired.map((k) => IMPORT_FIELDS.find((f) => f.key === k)?.label || k);
-    showMessage(`Please map required fields: ${labels.join(", ")}`, true);
+    showMessage(`Please map required fields: ${labels.join(", ")}`, 'error');
     return;
   }
 
@@ -2112,7 +2138,7 @@ function showImportPreview() {
 async function runImport() {
   if (!state.importValidatedRows || !state.importParsed) return;
   const validRows = state.importValidatedRows.filter((r) => !r.errors.length).map((r) => r.row);
-  if (!validRows.length) { showMessage("No valid rows to import.", true); return; }
+  if (!validRows.length) { showMessage("No valid rows to import.", 'error'); return; }
 
   elements.importConfirm.disabled = true;
   elements.importConfirm.textContent = "Importing...";
@@ -2153,7 +2179,7 @@ async function runImport() {
     showImportStep("results");
     await Promise.all([refreshTickets(), refreshDashboard(), refreshImportHistory()]);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
     elements.importConfirm.disabled = false;
     elements.importConfirm.textContent = "Import valid rows";
   }
@@ -2209,10 +2235,10 @@ async function rollbackImport(batchId) {
   if (!window.confirm(`Roll back "${name}"?\n\nThis will permanently delete all ${batch?.created_count || 0} tickets created by this import. This cannot be undone.`)) return;
   try {
     const result = await apiFetch(`/api/import-history/${batchId}`, { method: "DELETE" });
-    showMessage(`Rollback complete. ${result.tickets_deleted} tickets deleted.`);
+    showMessage(`Rollback complete. ${result.tickets_deleted} tickets deleted.`, 'success');
     await Promise.all([refreshTickets(), refreshDashboard(), refreshImportHistory()]);
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -2240,9 +2266,9 @@ async function deleteTicket() {
     await apiFetch(`/api/tickets/${ticket.id}`, { method: "DELETE" });
     closeTicketDetail();
     await Promise.all([refreshTickets(), refreshDashboard()]);
-    showMessage(`Ticket ${ticket.jd_ticket_number} deleted.`);
+    showMessage(`Ticket ${ticket.jd_ticket_number} deleted.`, 'success');
   } catch (error) {
-    showMessage(error.message, true);
+    showMessage(error.message, 'error');
   }
 }
 
@@ -2266,14 +2292,47 @@ function setDefaultDates() {
   if (!opening.value) opening.value = formatIsoDate(Date.now());
 }
 
-function showMessage(text, isError = false) {
-  elements.message.hidden = false;
-  elements.message.textContent = text;
-  elements.message.classList.toggle("error", isError);
-  clearTimeout(showMessage.timer);
-  showMessage.timer = setTimeout(() => {
-    elements.message.hidden = true;
-  }, 3000);
+const _loading = {};
+
+function setLoading(key, val) {
+  _loading[key] = val;
+  const el = document.querySelector(`[data-loading="${key}"]`);
+  if (el) el.style.opacity = val ? '0.5' : '1';
+}
+
+const _toastQueue = [];
+let _toastVisible = false;
+
+function showMessage(msg, type = 'info', durationMs = 4000) {
+  // Support legacy boolean second arg (true = error)
+  if (type === true) type = 'error';
+  else if (type === false) type = 'info';
+  _toastQueue.push({ msg, type, durationMs });
+  if (!_toastVisible) _flushToast();
+}
+
+function _flushToast() {
+  if (_toastQueue.length === 0) { _toastVisible = false; return; }
+  _toastVisible = true;
+  const { msg, type, durationMs } = _toastQueue.shift();
+  const el = document.getElementById('message') || document.querySelector('[role="status"]');
+  if (!el) { _flushToast(); return; }
+  const icons = { error: '✖', warning: '⚠', success: '✔', info: 'ℹ' };
+  el.textContent = `${icons[type] || ''} ${msg}`;
+  el.className = `message message--${type} message--visible`;
+  el.setAttribute('role', 'status');
+  el.setAttribute('aria-live', type === 'error' ? 'assertive' : 'polite');
+  el.removeAttribute('hidden');
+  if (type !== 'error') {
+    setTimeout(() => {
+      el.classList.remove('message--visible');
+      el.setAttribute('hidden', '');
+      setTimeout(_flushToast, 300);
+    }, durationMs);
+  } else {
+    // errors persist until user dismisses or next toast
+    setTimeout(_flushToast, Math.max(durationMs, 6000));
+  }
 }
 
 function renderBadge(text, tone) {
@@ -2386,7 +2445,7 @@ function clearAdvancedFilters() {
   
   state.currentPage = 1;
   refreshTickets();
-  showMessage("Advanced filters cleared");
+  showMessage("Advanced filters cleared", 'info');
 }
 
 async function saveCurrentSearch() {
@@ -2406,9 +2465,9 @@ async function saveCurrentSearch() {
     localStorage.setItem('savedSearches', JSON.stringify(savedSearches));
     state.savedSearches = savedSearches;
     renderSavedSearches();
-    showMessage("Search saved successfully");
+    showMessage("Search saved successfully", 'success');
   } catch (error) {
-    showMessage("Failed to save search", true);
+    showMessage("Failed to save search", 'error');
   }
 }
 
@@ -2456,7 +2515,7 @@ function loadSavedSearch(index) {
   
   state.currentPage = 1;
   refreshTickets();
-  showMessage(`Loaded search: ${search.name}`);
+  showMessage(`Loaded search: ${search.name}`, 'info');
 }
 
 function deleteSavedSearch(index) {
@@ -2465,7 +2524,7 @@ function deleteSavedSearch(index) {
   state.savedSearches.splice(index, 1);
   localStorage.setItem('savedSearches', JSON.stringify(state.savedSearches));
   renderSavedSearches();
-  showMessage('Search deleted');
+  showMessage('Search deleted', 'info');
 }
 
 // Dark Mode Functions
